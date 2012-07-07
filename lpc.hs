@@ -16,6 +16,7 @@ data Animation = Animation {
 		frame  :: Int,
 		now    :: Ticks
 	}
+	deriving (Show, Read, Eq)
 
 data Player = Player {
 		sprites   :: SDL.Surface,
@@ -23,6 +24,7 @@ data Player = Player {
 		control   :: H.Body,
                 animation :: Animation
 	}
+	deriving (Eq)
 
 data Space = Space H.Space Ticks Ticks
 
@@ -43,16 +45,27 @@ jRect x y w h = Just $ SDL.Rect x y w h
 timesLoop 0 _ = return ()
 timesLoop n f = f >> (n-1) `timesLoop` f
 
-sdlEventLoop win sprites player gameSpace = do
+advanceAnimation :: Animation -> Ticks -> Animation
+advanceAnimation ani ticks
+	| frame' == (frame ani) = ani
+	| otherwise = ani { frame = frame', now = ticks }
+	where
+	frame' = fromIntegral $ (currentFrame + steps) `mod` countFrames
+	currentFrame = fromIntegral $ frame ani
+	countFrames = fromIntegral $ frames ani
+	steps = time `div` (1000 `div` 10)
+	time = ticks - (now ani)
+
+sdlEventLoop win player gameSpace = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	case e of
 		SDL.User SDL.UID0 _ _ _ -> do
 			ticks <- SDL.getTicks
 			gameSpace' <- doPhysics ticks
 			player' <- doDrawing ticks
-			sdlEventLoop win sprites player' gameSpace'
+			sdlEventLoop win player' gameSpace'
 		SDL.Quit -> return ()
-		_ -> print e >> sdlEventLoop win sprites player gameSpace
+		_ -> print e >> sdlEventLoop win player gameSpace
 	where
 	doPhysics ticks = do
 		let (Space hSpace spaceTicks dtRemainder) = gameSpace
@@ -60,22 +73,20 @@ sdlEventLoop win sprites player gameSpace = do
 		(time `div` frameTime) `timesLoop` (H.step hSpace (1/60))
 		return $ Space hSpace ticks (time `mod` frameTime)
 	doDrawing ticks =
-		let
-			ani = animation player
-			time = ticks - (now ani)
-			frame' = fromIntegral $ ((fromIntegral $ frame ani) + (time `div` (1000 `div` 10))) `mod` (fromIntegral $ frames ani) in
-		if frame' == (frame ani) then
-			-- idx has not advanced, so player has not changed
+		let ani = advanceAnimation (animation player) ticks in
+		if ani == (animation player) then
+			-- Animation has not advanced, so player has not changed
 			return player
 		else do
 			(H.Vector x' y') <- get $ H.position $ H.body $ shape player
 			let (x, y) = (floor x', floor y')
+			let box = jRect x y 64 64
 
 			black <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0 0
-			SDL.fillRect win (jRect x y 64 64) black
-			SDL.blitSurface sprites (jRect (64*frame') (64*(row ani)) 64 64) win (jRect x y 64 64)
+			SDL.fillRect win box black
+			SDL.blitSurface (sprites player) (jRect (64*(frame ani)) (64*(row ani)) 64 64) win box
 			SDL.flip win
-			return (player {animation = ani {frame = frame', now = ticks}})
+			return (player {animation = ani})
 
 newPlayer :: H.Space -> SDL.Surface -> Animation -> H.CpFloat -> IO Player
 newPlayer space sprites animation mass = do
@@ -117,6 +128,6 @@ main = SDL.withInit [SDL.InitEverything] $ do
 	player <- newPlayer gameSpace sprites (Animation 3 9 0 startTicks) 10
 	H.velocity (control player) $= H.Vector 60 0
 
-	sdlEventLoop win sprites player (Space gameSpace startTicks 0)
+	sdlEventLoop win player (Space gameSpace startTicks 0)
 	H.freeSpace gameSpace
 	SDL.quit
