@@ -10,7 +10,20 @@ import qualified Physics.Hipmunk as H
 
 type Ticks = Word32
 
-data Player = Player Int Int Int Ticks H.Body
+data Animation = Animation {
+		row    :: Int,
+		frames :: Int,
+		frame  :: Int,
+		now    :: Ticks
+	}
+
+data Player = Player {
+		sprites   :: SDL.Surface,
+		shape     :: H.Shape,
+		control   :: H.Body,
+                animation :: Animation
+	}
+
 data Space = Space H.Space Ticks Ticks
 
 frameRate :: (Num a) => a
@@ -48,23 +61,46 @@ sdlEventLoop win sprites player gameSpace = do
 		return $ Space hSpace ticks (time `mod` frameTime)
 	doDrawing ticks =
 		let
-			(Player y idxEnd idx lastTicks body) = player
-			time = ticks - lastTicks
-			idx' = fromIntegral $ ((fromIntegral idx) + (time `div` (1000 `div` 10))) `mod` (fromIntegral idxEnd) in
-		if idx' == idx then
+			ani = animation player
+			time = ticks - (now ani)
+			frame' = fromIntegral $ ((fromIntegral $ frame ani) + (time `div` (1000 `div` 10))) `mod` (fromIntegral $ frames ani) in
+		if frame' == (frame ani) then
 			-- idx has not advanced, so player has not changed
 			return player
 		else do
-			(H.Vector bx' by') <- get (H.position body)
-			let (bx, by) = (floor bx', floor by')
-			vel <- get $ H.velocity body
-			print (bx', by', bx, by, vel)
+			(H.Vector x' y') <- get $ H.position $ H.body $ shape player
+			let (x, y) = (floor x', floor y')
 
 			black <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0 0
-			SDL.fillRect win (jRect bx by 64 64) black
-			SDL.blitSurface sprites (jRect (64*idx') (64*y) 64 64) win (jRect bx by 64 64)
+			SDL.fillRect win (jRect x y 64 64) black
+			SDL.blitSurface sprites (jRect (64*frame') (64*(row ani)) 64 64) win (jRect x y 64 64)
 			SDL.flip win
-			return (Player y idxEnd idx' ticks body)
+			return (player {animation = ani {frame = frame', now = ticks}})
+
+newPlayer :: H.Space -> SDL.Surface -> Animation -> H.CpFloat -> IO Player
+newPlayer space sprites animation mass = do
+	-- Create body and shape with mass and moment, add to space
+	body <- H.newBody mass moment
+	shape <- H.newShape body shapeType (H.Vector 0 0)
+	H.elasticity shape $= 0.0
+	H.friction shape $= 0.7
+	H.spaceAdd space body
+	H.spaceAdd space shape
+
+	-- Create control body and joint it up
+	control <- H.newBody H.infinity H.infinity
+	mkConstraint  control body (H.Pivot2 (H.Vector 0 0) (H.Vector 0 0)) 0 10000
+	mkConstraint control body (H.Gear 0 1) 1.2 50000
+
+	return $ Player sprites shape control animation
+	where
+	mkConstraint control body c bias force = do
+		constraint <- H.newConstraint control body c
+		H.spaceAdd space constraint
+		H.setMaxBias bias constraint
+		H.setMaxForce force constraint
+	moment = H.momentForShape mass shapeType (H.Vector 0 0)
+	shapeType = H.Circle 32
 
 forkIO_ :: IO a -> IO ()
 forkIO_ f = (forkIO (f >> return ())) >> return ()
@@ -78,35 +114,9 @@ main = SDL.withInit [SDL.InitEverything] $ do
 	sprites <- SDL.load "soldier.png"
 	startTicks <- SDL.getTicks
 
-	playerControlBody <- H.newBody H.infinity H.infinity
+	player <- newPlayer gameSpace sprites (Animation 3 9 0 startTicks) 10
+	H.velocity (control player) $= H.Vector 60 0
 
-	let playerShapeType = H.Circle 32
-	playerBody <- H.newBody 10 (H.momentForShape 10 playerShapeType (H.Vector 0 0))
-	playerShape <- H.newShape playerBody playerShapeType (H.Vector 0 0)
-	H.elasticity playerShape $= 0.0
-	H.friction playerShape $= 0.7
-
-	H.spaceAdd gameSpace playerBody
-	H.spaceAdd gameSpace playerShape
-
-	constraint <- H.newConstraint playerControlBody playerBody (H.Pivot2 (H.Vector 0 0) (H.Vector 0 0))
-	H.spaceAdd gameSpace constraint
-	H.setMaxBias 0 constraint
-	H.setMaxForce 10000 constraint
-
-	constraint <- H.newConstraint playerControlBody playerBody (H.Gear 0 1)
-	H.spaceAdd gameSpace constraint
-	H.setMaxBias 1.2 constraint
-	H.setMaxForce 50000 constraint
-
-	H.velocity playerControlBody $= H.Vector 60 0
-
-	-- Line to walk into
-	staticBody <- H.newBody H.infinity H.infinity
-	line <- H.newShape staticBody (H.LineSegment (H.Vector 100 0) (H.Vector 100 1000) 1) (H.Vector 0 0)
-	H.spaceAdd gameSpace staticBody
-	H.spaceAdd gameSpace (H.Static line)
-
-	sdlEventLoop win sprites (Player 3 9 0 startTicks playerBody) (Space gameSpace startTicks 0)
+	sdlEventLoop win sprites player (Space gameSpace startTicks 0)
 	H.freeSpace gameSpace
 	SDL.quit
