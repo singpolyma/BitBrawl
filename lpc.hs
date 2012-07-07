@@ -56,6 +56,11 @@ advanceAnimation ani ticks
 	steps = time `div` (1000 `div` 10)
 	time = ticks - (now ani)
 
+playerPosition :: Player -> IO (Int, Int)
+playerPosition player = do
+	(H.Vector x' y') <- get $ H.position $ H.body $ shape player
+	return (floor x', floor y')
+
 sdlEventLoop win player gameSpace = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	case e of
@@ -78,8 +83,7 @@ sdlEventLoop win player gameSpace = do
 			-- Animation has not advanced, so player has not changed
 			return player
 		else do
-			(H.Vector x' y') <- get $ H.position $ H.body $ shape player
-			let (x, y) = (floor x', floor y')
+			(x, y) <- playerPosition player
 			let box = jRect x y 64 64
 
 			black <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0 0
