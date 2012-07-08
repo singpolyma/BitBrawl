@@ -1,8 +1,18 @@
 import Control.Monad
+import Control.Applicative
 import Control.Concurrent (forkIO, threadDelay)
 import Foreign.Ptr (nullPtr)
+import Data.Char hiding (Space)
 import Data.Word
 import Data.StateVar
+import Data.Attoparsec.Text
+
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.IO as T
+
+import Data.Map (Map, (!))
+import qualified Data.Map as Map
 
 import Graphics.UI.SDL.Keysym (SDLKey(..))
 import qualified Graphics.UI.SDL as SDL
@@ -20,13 +30,16 @@ data Animation = Animation {
 	}
 	deriving (Show, Read, Eq)
 
+type Animations = Map String (Map Direction Animation)
+
 data Player = Player {
-		sprites   :: SDL.Surface,
-		shape     :: H.Shape,
-		control   :: H.Body,
-                animation :: (Animation, Ticks),
-		direction :: Direction,
-		speed     :: H.CpFloat
+		sprites    :: SDL.Surface,
+		shape      :: H.Shape,
+		control    :: H.Body,
+		animation  :: (Animation, Ticks),
+		animations :: Animations,
+		direction  :: Direction,
+		speed      :: H.CpFloat
 	}
 	deriving (Eq)
 
@@ -51,6 +64,7 @@ timesLoop n f = f >> (n-1) `timesLoop` f
 
 advanceAnimation :: (Animation,Ticks) -> Ticks -> (Animation,Ticks)
 advanceAnimation (ani, now) ticks
+	| frames ani < 2 = (ani, ticks)
 	| frame' == (frame ani) = (ani, now)
 	| otherwise = (ani { frame = frame' }, ticks)
 	where
@@ -150,8 +164,8 @@ sdlEventLoop win player gameSpace = do
 			SDL.flip win
 			return (player {animation = (ani, aniTicks)})
 
-newPlayer :: H.Space -> SDL.Surface -> (Animation, Ticks) -> H.CpFloat -> IO Player
-newPlayer space sprites animation mass = do
+newPlayer :: H.Space -> SDL.Surface -> Animations -> Ticks -> H.CpFloat -> IO Player
+newPlayer space sprites anis startTicks mass = do
 	-- Create body and shape with mass and moment, add to space
 	body <- H.newBody mass moment
 	shape <- H.newShape body shapeType (H.Vector 0 0)
@@ -169,7 +183,7 @@ newPlayer space sprites animation mass = do
 	mkConstraint  control body (H.Pivot2 (H.Vector 0 0) (H.Vector 0 0)) 0 10000
 	mkConstraint control body (H.Gear 0 1) 1.2 50000
 
-	return $ Player sprites shape control animation E 0
+	return $ Player sprites shape control (anis ! "idle" ! E, startTicks) anis E 0
 	where
 	mkConstraint control body c bias force = do
 		constraint <- H.newConstraint control body c
@@ -182,6 +196,30 @@ newPlayer space sprites animation mass = do
 forkIO_ :: IO a -> IO ()
 forkIO_ f = (forkIO (f >> return ())) >> return ()
 
+player_parser :: Parser Animations
+player_parser = do
+	takeWhile1 (not.isEndOfLine) -- Ignore name for now
+	endOfLine
+	(fmap Map.fromList $ many animation_set) <* skipSpace <* endOfInput
+	where
+	animation_set = do
+		skipSpace
+		key <- takeWhile1 (\x -> not $ x == '{' || isSpace x)
+		skipSpace
+		char '{'
+		ani <- many directed_animation
+		skipSpace
+		char '}'
+		return $ (T.unpack key, Map.fromList ani)
+	directed_animation = do
+		skipSpace
+		direction <- readOne ["NE", "NW", "SE", "SW", "E", "N", "W", "S"]
+		ani <- liftM3 Animation ws_int ws_int ws_int
+		skipWhile (\x -> isSpace x && not (isEndOfLine x)) *> endOfLine
+		return (direction, ani)
+	readOne = fmap (read . T.unpack) . choice . map (string . T.pack)
+	ws_int = skipSpace *> decimal
+
 main = SDL.withInit [SDL.InitEverything] $ do
 	H.initChipmunk
 	gameSpace <- H.newSpace
@@ -191,7 +229,9 @@ main = SDL.withInit [SDL.InitEverything] $ do
 	sprites <- SDL.load "soldier.png"
 	startTicks <- SDL.getTicks
 
-	player <- newPlayer gameSpace sprites ((Animation 3 9 0), startTicks) 10
+	Right anis <- fmap (parseOnly player_parser) $ T.readFile "./soldier.player"
+
+	player <- newPlayer gameSpace sprites anis startTicks 10
 
 	sdlEventLoop win player (Space gameSpace startTicks 0)
 	H.freeSpace gameSpace
