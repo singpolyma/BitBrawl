@@ -20,6 +20,8 @@ import qualified Graphics.UI.SDL.Image as SDL
 import qualified Physics.Hipmunk as H
 
 type Ticks = Word32
+type Speed = H.CpFloat
+type Animations = Map String (Map Direction Animation)
 
 data Direction = E | NE | N | NW | W | SW | S | SE deriving (Show, Read, Enum, Ord, Eq)
 
@@ -30,8 +32,6 @@ data Animation = Animation {
 	}
 	deriving (Show, Read, Eq)
 
-type Animations = Map String (Map Direction Animation)
-
 data Player = Player {
 		sprites    :: SDL.Surface,
 		shape      :: H.Shape,
@@ -39,9 +39,14 @@ data Player = Player {
 		animation  :: (Animation, Ticks),
 		animations :: Animations,
 		direction  :: Direction,
-		speed      :: H.CpFloat
+		speed      :: Speed
 	}
 	deriving (Eq)
+
+data Action = Face Direction | Go Speed deriving (Show, Read, Eq)
+
+data KeyState = KeyDown | KeyUp deriving (Show, Read, Enum, Ord, Eq)
+data Control = KeyboardControl [(SDLKey, Action)] deriving (Show, Eq)
 
 data Space = Space H.Space Ticks Ticks
 
@@ -51,6 +56,9 @@ frameRate = 30
 frameTime :: (Num a) => a
 frameTime = fromIntegral (1000 `div` frameRate)
 
+playerSpeed :: (Num a) => a
+playerSpeed = 60
+
 timer :: Int -> IO a -> IO ()
 timer t f = do
 	_ <- f
@@ -58,6 +66,15 @@ timer t f = do
 	timer t f
 
 jRect x y w h = Just $ SDL.Rect x y w h
+
+splitDirection  E = [E]
+splitDirection NE = [N,E]
+splitDirection  N = [N]
+splitDirection NW = [N,W]
+splitDirection  W = [W]
+splitDirection SW = [S,W]
+splitDirection  S = [S]
+splitDirection SE = [S,E]
 
 timesLoop 0 _ = return ()
 timesLoop n f = f >> (n-1) `timesLoop` f
@@ -84,62 +101,65 @@ directionToRadians d = (factor * pi) / 4
 	where
 	factor = fromIntegral $ fromEnum d
 
-sdlEventLoop win player gameSpace = do
+sdlEventLoop win controls player gameSpace = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	case e of
 		SDL.User SDL.UID0 _ _ _ -> do
 			ticks <- SDL.getTicks
 			gameSpace' <- doPhysics ticks
 			player' <- doDrawing ticks
-			sdlEventLoop win player' gameSpace'
+			next player' gameSpace'
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
-			sdlEventLoop win (updateAnimation $ handleKeyDown keysym) gameSpace
+			next (updateAnimation $ handleKeyboard KeyDown keysym) gameSpace
 		SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
-			sdlEventLoop win (updateAnimation $ handleKeyUp keysym) gameSpace
+			next (updateAnimation $ handleKeyboard KeyUp keysym) gameSpace
 		SDL.Quit -> return ()
-		_ -> print e >> sdlEventLoop win player gameSpace
+		_ -> print e >> next player gameSpace
 	where
-	pgo player = player { speed = 60 }
+	next p s = sdlEventLoop win controls p s
 
-	handleKeyDown SDLK_DOWN
-		| (speed player) == 0 = pgo $ player {direction = S}
-		| (direction player) `elem` [W,NW,SW] = pgo $ player {direction = SW}
-		| (direction player) `elem` [E,NE,SE] = pgo $ player {direction = SE}
-		| otherwise = pgo $ player {direction = S}
-	handleKeyDown SDLK_UP
-		| (speed player) == 0 = pgo $ player {direction = N}
-		| (direction player) `elem` [W,NW,SW] = player {direction = NW}
-		| (direction player) `elem` [E,NE,SE] = player {direction = NE}
-		| otherwise = pgo $ player {direction = N}
-	handleKeyDown SDLK_LEFT
-		| (speed player) == 0 = pgo $ player {direction = W}
-		| (direction player) `elem` [N,NW,NE] = pgo $ player {direction = NW}
-		| (direction player) `elem` [S,SW,SE] = pgo $ player {direction = SW}
-		| otherwise = pgo $ player {direction = W}
-	handleKeyDown SDLK_RIGHT
-		| (speed player) == 0 = pgo $ player {direction = E}
-		| (direction player) `elem` [N,NW,NE] = pgo $ player {direction = NE}
-		| (direction player) `elem` [S,SW,SE] = pgo $ player {direction = SE}
-		| otherwise = pgo $ player {direction = E}
-	handleKeyDown _ = player
+	handleAction (Face d) p = p {direction = d}
+	handleAction (Go s) p = p {speed = s}
 
-	handleKeyUp SDLK_DOWN
-		| (direction player) == SE = player {direction = E}
-		| (direction player) == SW = player {direction = W}
-		| (direction player) == S  = player {speed = 0}
-	handleKeyUp SDLK_UP
-		| (direction player) == NE = player {direction = E}
-		| (direction player) == NW = player {direction = W}
-		| (direction player) == N  = player {speed = 0}
-	handleKeyUp SDLK_LEFT
-		| (direction player) == NW = player {direction = N}
-		| (direction player) == SW = player {direction = S}
-		| (direction player) == W  = player {speed = 0}
-	handleKeyUp SDLK_RIGHT
-		| (direction player) == NE = player {direction = N}
-		| (direction player) == SE = player {direction = S}
-		| (direction player) == E  = player {speed = 0}
-	handleKeyUp _ = player
+	handleKeyboard keystate keysym =
+		foldr handleAction player (comboKeyboard keystate $ getKeyAction (head controls) keysym)
+
+	getKeyAction (KeyboardControl c) keysym = lookup keysym c
+
+	comboKeyboard KeyDown (Just (Face d))
+		| speed player == 0 = [Face d, Go playerSpeed]
+		| otherwise = [Face $ setOneAxis (direction player) d, Go playerSpeed]
+	comboKeyboard KeyUp (Just (Face d))
+		| null (unsetOneAxis (direction player) d) = [Go 0]
+		| otherwise = [Face $ head $ unsetOneAxis (direction player) d]
+	comboKeyboard _ (Just a) = [a]
+	comboKeyboard _ Nothing = []
+
+	setOneAxis d E
+		| N `elem` splitDirection d = NE
+		| S `elem` splitDirection d = SE
+		| otherwise = E
+	setOneAxis d N
+		| E `elem` splitDirection d = NE
+		| W `elem` splitDirection d = NW
+		| otherwise = N
+	setOneAxis d W
+		| N `elem` splitDirection d = NW
+		| S `elem` splitDirection d = SW
+		| otherwise = W
+	setOneAxis d S
+		| E `elem` splitDirection d = SE
+		| W `elem` splitDirection d = SW
+		| otherwise = S
+	setOneAxis d bad = error ("Cannot set " ++ show bad ++ " as an axis on " ++ show d)
+
+	unsetOneAxis d a =
+		let d' = filter (/=a) (splitDirection d) in
+		if d' == (splitDirection d) then
+			-- Unchanged, keep direction
+			[d]
+		else
+			d'
 
 	updateAnimation p@(Player {
 				direction = d,
@@ -239,9 +259,17 @@ main = SDL.withInit [SDL.InitEverything] $ do
 	startTicks <- SDL.getTicks
 
 	Right anis <- fmap (parseOnly player_parser) $ T.readFile "./soldier.player"
-
 	player <- newPlayer gameSpace sprites anis startTicks 10
 
-	sdlEventLoop win player (Space gameSpace startTicks 0)
+	let controls = [
+			KeyboardControl [
+				(SDLK_RIGHT,   Face E),
+				(SDLK_UP,      Face N),
+				(SDLK_LEFT,    Face W),
+				(SDLK_DOWN,    Face S)
+			]
+		]
+
+	sdlEventLoop win controls player (Space gameSpace startTicks 0)
 	H.freeSpace gameSpace
 	SDL.quit
