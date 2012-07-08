@@ -93,9 +93,9 @@ sdlEventLoop win player gameSpace = do
 			player' <- doDrawing ticks
 			sdlEventLoop win player' gameSpace'
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
-			sdlEventLoop win (handleKeyDown keysym) gameSpace
+			sdlEventLoop win (updateAnimation $ handleKeyDown keysym) gameSpace
 		SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
-			sdlEventLoop win (handleKeyUp keysym) gameSpace
+			sdlEventLoop win (updateAnimation $ handleKeyUp keysym) gameSpace
 		SDL.Quit -> return ()
 		_ -> print e >> sdlEventLoop win player gameSpace
 	where
@@ -140,6 +140,15 @@ sdlEventLoop win player gameSpace = do
 		| (direction player) == SE = player {direction = S}
 		| (direction player) == E  = player {speed = 0}
 	handleKeyUp _ = player
+
+	updateAnimation p@(Player {
+				direction = d,
+				animation = (ani, ticks),
+				animations = anis,
+				speed = speed
+			})
+		| speed > 0 = p {animation = (anis ! "walk" ! d, ticks)}
+		| otherwise = p {animation = (anis ! "idle" ! d, ticks)}
 
 	doPhysics ticks = do
 		let d = H.fromAngle (directionToRadians $ direction player)
