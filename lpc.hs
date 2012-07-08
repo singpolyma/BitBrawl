@@ -16,8 +16,7 @@ data Direction = E | NE | N | NW | W | SW | S | SE deriving (Show, Read, Enum, O
 data Animation = Animation {
 		row    :: Int,
 		frames :: Int,
-		frame  :: Int,
-		now    :: Ticks
+		frame  :: Int
 	}
 	deriving (Show, Read, Eq)
 
@@ -25,7 +24,7 @@ data Player = Player {
 		sprites   :: SDL.Surface,
 		shape     :: H.Shape,
 		control   :: H.Body,
-                animation :: Animation,
+                animation :: (Animation, Ticks),
 		direction :: Direction,
 		speed     :: H.CpFloat
 	}
@@ -50,16 +49,16 @@ jRect x y w h = Just $ SDL.Rect x y w h
 timesLoop 0 _ = return ()
 timesLoop n f = f >> (n-1) `timesLoop` f
 
-advanceAnimation :: Animation -> Ticks -> Animation
-advanceAnimation ani ticks
-	| frame' == (frame ani) = ani
-	| otherwise = ani { frame = frame', now = ticks }
+advanceAnimation :: (Animation,Ticks) -> Ticks -> (Animation,Ticks)
+advanceAnimation (ani, now) ticks
+	| frame' == (frame ani) = (ani, now)
+	| otherwise = (ani { frame = frame' }, ticks)
 	where
 	frame' = fromIntegral $ (currentFrame + steps) `mod` countFrames
 	currentFrame = fromIntegral $ frame ani
 	countFrames = fromIntegral $ frames ani
 	steps = time `div` (1000 `div` 10)
-	time = ticks - (now ani)
+	time = ticks - now
 
 playerPosition :: Player -> IO (Int, Int)
 playerPosition player = do
@@ -136,8 +135,8 @@ sdlEventLoop win player gameSpace = do
 		(time `div` frameTime) `timesLoop` (H.step hSpace (frameTime/1000))
 		return $ Space hSpace ticks (time `mod` frameTime)
 	doDrawing ticks =
-		let ani = advanceAnimation (animation player) ticks in
-		if ani == (animation player) then
+		let (ani,aniTicks) = advanceAnimation (animation player) ticks in
+		if aniTicks == (snd $ animation player) then
 			-- Animation has not advanced, so player has not changed
 			return player
 		else do
@@ -149,9 +148,9 @@ sdlEventLoop win player gameSpace = do
 			SDL.fillRect win (jRect 0 0 640 480) black
 			SDL.blitSurface (sprites player) (jRect (64*(frame ani)) (64*(row ani)) 64 64) win box
 			SDL.flip win
-			return (player {animation = ani})
+			return (player {animation = (ani, aniTicks)})
 
-newPlayer :: H.Space -> SDL.Surface -> Animation -> H.CpFloat -> IO Player
+newPlayer :: H.Space -> SDL.Surface -> (Animation, Ticks) -> H.CpFloat -> IO Player
 newPlayer space sprites animation mass = do
 	-- Create body and shape with mass and moment, add to space
 	body <- H.newBody mass moment
@@ -192,7 +191,7 @@ main = SDL.withInit [SDL.InitEverything] $ do
 	sprites <- SDL.load "soldier.png"
 	startTicks <- SDL.getTicks
 
-	player <- newPlayer gameSpace sprites (Animation 3 9 0 startTicks) 10
+	player <- newPlayer gameSpace sprites ((Animation 3 9 0), startTicks) 10
 
 	sdlEventLoop win player (Space gameSpace startTicks 0)
 	H.freeSpace gameSpace
