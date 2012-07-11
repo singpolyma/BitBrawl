@@ -1,0 +1,12 @@
+This code is pretty hacky right now.  I don't have a Makefile yet (run with runhaskell), and it will throw all sorts of warnings.  I'm sort of prototyping as I go, but it works so far.
+
+Dependencies:
+
+libghc-sdl-dev
+libghc-sdl-ttf-dev
+libghc-sdl-image-dev
+libghc-attoparsec-dev >= 0.10.0.0
+
+(also installable from cabal)
+
+Also, Hipmunk, but with a patch applied that has not yet been mainlined.  I may make my fork available soon if the maintainers do not mainline it.  Using Hipmunk as-is may be possible, but the physics may not react as expected.
