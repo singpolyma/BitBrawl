@@ -43,10 +43,12 @@ data Player = Player {
 	}
 	deriving (Eq)
 
+data KeyboardAction = KFace Direction | KStart deriving (Show, Read, Eq)
+
 data Action = Face Direction | Go Speed deriving (Show, Read, Eq)
 
 data KeyState = KeyDown | KeyUp deriving (Show, Read, Enum, Ord, Eq)
-data Control = KeyboardControl [(SDLKey, Action)] deriving (Show, Eq)
+data Control = KeyboardControl [(SDLKey, KeyboardAction)] deriving (Show, Eq)
 
 data Space = Space H.Space Ticks Ticks
 
@@ -126,14 +128,13 @@ sdlEventLoop win controls player gameSpace = do
 
 	getKeyAction (KeyboardControl c) keysym = lookup keysym c
 
-	comboKeyboard KeyDown (Just (Face d))
+	comboKeyboard KeyDown (Just (KFace d))
 		| speed player == 0 = [Face d, Go playerSpeed]
 		| otherwise = [Face $ setOneAxis (direction player) d, Go playerSpeed]
-	comboKeyboard KeyUp (Just (Face d))
+	comboKeyboard KeyUp (Just (KFace d))
 		| null (unsetOneAxis (direction player) d) = [Go 0]
 		| otherwise = [Face $ head $ unsetOneAxis (direction player) d]
-	comboKeyboard _ (Just a) = [a]
-	comboKeyboard _ Nothing = []
+	comboKeyboard _ _ = []
 
 	setOneAxis d E
 		| N `elem` splitDirection d = NE
