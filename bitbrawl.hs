@@ -17,6 +17,7 @@ import qualified Data.Map as Map
 import Graphics.UI.SDL.Keysym (SDLKey(..))
 import qualified Graphics.UI.SDL as SDL
 import qualified Graphics.UI.SDL.Image as SDL
+import qualified Graphics.UI.SDL.TTF as SDL.TTF
 import qualified Physics.Hipmunk as H
 
 type Ticks = Word32
@@ -36,6 +37,7 @@ data Player = Player {
 		sprites    :: SDL.Surface,
 		shape      :: H.Shape,
 		control    :: H.Body,
+		controls   :: Control,
 		animation  :: (Animation, Ticks),
 		animations :: Animations,
 		direction  :: Direction,
@@ -60,6 +62,12 @@ frameTime = fromIntegral (1000 `div` frameRate)
 
 playerSpeed :: (Num a) => a
 playerSpeed = 60
+
+windowWidth :: (Num a) => a
+windowWidth = 800
+
+windowHeight :: (Num a) => a
+windowHeight = 600
 
 timer :: Int -> IO a -> IO ()
 timer t f = do
@@ -103,31 +111,34 @@ directionToRadians d = (factor * pi) / 4
 	where
 	factor = fromIntegral $ fromEnum d
 
-sdlEventLoop win controls player gameSpace = do
+clipAnimation ani = jRect (64*(frame ani)) (64*(row ani)) 64 64
+
+getKeyAction (KeyboardControl c) keysym = lookup keysym c
+
+gameLoop win gameSpace players = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	case e of
 		SDL.User SDL.UID0 _ _ _ -> do
 			ticks <- SDL.getTicks
 			gameSpace' <- doPhysics ticks
 			player' <- doDrawing ticks
-			next player' gameSpace'
+			next gameSpace' player'
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
-			next (updateAnimation $ handleKeyboard KeyDown keysym) gameSpace
+			next gameSpace (updateAnimation $ handleKeyboard KeyDown keysym)
 		SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
-			next (updateAnimation $ handleKeyboard KeyUp keysym) gameSpace
+			next gameSpace (updateAnimation $ handleKeyboard KeyUp keysym)
 		SDL.Quit -> return ()
-		_ -> print e >> next player gameSpace
+		_ -> print e >> next gameSpace player
 	where
-	next p s = sdlEventLoop win controls p s
+	next s p = gameLoop win s [p]
 
 	handleAction (Face d) p = p {direction = d}
 	handleAction (Go s) p = p {speed = s}
 
+	player = head players
+
 	handleKeyboard keystate keysym =
-		foldr handleAction player (comboKeyboard keystate $ getKeyAction (head controls) keysym)
-
-	getKeyAction (KeyboardControl c) keysym = lookup keysym c
-
+		foldr handleAction player (comboKeyboard keystate $ getKeyAction (controls player) keysym)
 	comboKeyboard KeyDown (Just (KFace d))
 		| speed player == 0 = [Face d, Go playerSpeed]
 		| otherwise = [Face $ setOneAxis (direction player) d, Go playerSpeed]
@@ -190,12 +201,12 @@ sdlEventLoop win controls player gameSpace = do
 			black <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0 0
 			-- We don't know where the player was before. Erase whole screen
 			SDL.fillRect win (jRect 0 0 640 480) black
-			SDL.blitSurface (sprites player) (jRect (64*(frame ani)) (64*(row ani)) 64 64) win box
+			SDL.blitSurface (sprites player) (clipAnimation ani) win box
 			SDL.flip win
 			return (player {animation = (ani, aniTicks)})
 
-newPlayer :: H.Space -> SDL.Surface -> Animations -> Ticks -> H.CpFloat -> IO Player
-newPlayer space sprites anis startTicks mass = do
+newPlayer :: H.Space -> SDL.Surface -> Animations -> Control -> Ticks -> H.CpFloat -> IO Player
+newPlayer space sprites anis controls startTicks mass = do
 	-- Create body and shape with mass and moment, add to space
 	body <- H.newBody mass moment
 	shape <- H.newShape body shapeType (H.Vector 0 0)
@@ -213,7 +224,7 @@ newPlayer space sprites anis startTicks mass = do
 	mkConstraint  control body (H.Pivot2 (H.Vector 0 0) (H.Vector 0 0)) 0 10000
 	mkConstraint control body (H.Gear 0 1) 1.2 50000
 
-	return $ Player sprites shape control (anis ! "idle" ! E, startTicks) anis E 0
+	return $ Player sprites shape control controls (anis ! "idle" ! E, startTicks) anis E 0
 	where
 	mkConstraint control body c bias force = do
 		constraint <- H.newConstraint control body c
@@ -250,27 +261,113 @@ player_parser = do
 	readOne = fmap (read . T.unpack) . choice . map (string . T.pack)
 	ws_int = skipSpace *> decimal
 
-main = SDL.withInit [SDL.InitEverything] $ do
-	H.initChipmunk
-	gameSpace <- H.newSpace
+sdlKeyName = drop 5 . show
 
-	forkIO_ $ timer frameTime (SDL.tryPushEvent $ SDL.User SDL.UID0 0 nullPtr nullPtr)
-	win <- SDL.setVideoMode 640 480 16 [SDL.HWSurface,SDL.HWAccel,SDL.AnyFormat,SDL.DoubleBuf]
-	sprites <- SDL.load "soldier.png"
+startGame win controls = do
+	gameSpace <- H.newSpace
 	startTicks <- SDL.getTicks
 
-	Right anis <- fmap (parseOnly player_parser) $ T.readFile "./soldier.player"
-	player <- newPlayer gameSpace sprites anis startTicks 10
+	players <- mapM (\((anis,sprites), c) ->
+			newPlayer gameSpace sprites anis c startTicks 10
+		) controls
 
-	let controls = [
-			KeyboardControl [
-				(SDLK_RIGHT,   Face E),
-				(SDLK_UP,      Face N),
-				(SDLK_LEFT,    Face W),
-				(SDLK_DOWN,    Face S)
-			]
-		]
+	gameLoop win (Space gameSpace startTicks 0) players
 
-	sdlEventLoop win controls player (Space gameSpace startTicks 0)
 	H.freeSpace gameSpace
+
+playerJoinLoop win menuFont pcs =
+	loop Nothing 0 kActions [(0, KeyboardControl [])]
+	where
+	kActions = [KFace E, KFace N, KFace W, KFace S, KStart]
+	loop keyDown downFor aLeft controls = do
+		e <- SDL.waitEvent -- Have to use the expensive wait so timer works
+		case e of
+			SDL.User SDL.UID0 _ _ _ ->
+				onTimer keyDown downFor aLeft controls
+			SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) -> do
+				let (existing, controls') = foldr (\(p,c) (done, xs) ->
+						let a = getKeyAction c keysym in
+						case a of
+							(Just (KFace E)) -> (1, ((p+1) `mod` (length pcs),c):xs)
+							(Just (KFace W)) -> (1, ((p+(length pcs)-1) `mod` (length pcs),c):xs)
+							(Just KStart) -> (-1, (p,c):xs)
+							(Just _) -> (1, (p,c):xs)
+							_ -> (done, (p,c):xs)
+					) (0, []) controls
+				case existing of
+					0 -> loop (Just keysym) 0 aLeft controls'
+					1 -> loop Nothing 0 aLeft controls'
+					-1 -> startGame win (tail $ map (\(p,c) -> (pcs!!p,c)) controls)
+			SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
+				loop (if (Just keysym) == keyDown then Nothing else keyDown) 0 aLeft controls
+			SDL.Quit -> return ()
+			_ -> print e >> loop keyDown downFor aLeft controls
+	barWidth downFor = minimum [windowWidth-20, ((windowWidth-20) * downFor) `div` 20]
+	addBinding b (KeyboardControl c) = KeyboardControl (b:c)
+	drawText surface x y font string color = do
+		rendered <- SDL.TTF.renderUTF8Blended font string color
+		SDL.blitSurface rendered Nothing win (jRect x y 0 0)
+	centre w = (windowWidth `div` 2) - (w `div` 2)
+	drawActionLabel pnum a = do
+		let s = "Hold down " ++ (show a) ++ " for Player " ++ (show pnum)
+		(w, h) <- SDL.TTF.utf8Size menuFont s
+		drawText win (centre w) 10 menuFont s (SDL.Color 0xff 0xff 0xff)
+		return h
+	drawLabelAndPlayers a controls = do
+		labelH <- drawActionLabel ((length controls)+1) a
+		mapM (\(i,(p,_)) -> do
+				let (anis, sprites) = pcs !! p
+				let x = 10+(i*74)
+				let y = 20+(labelH*2)
+				drawText win x y menuFont ("Player "++show (i+1)) (SDL.Color 0xff 0xff 0xff)
+				SDL.blitSurface sprites (clipAnimation $ anis ! "idle" ! E) win (jRect x (y+labelH+3) 0 0)
+			) (zip [0..] (reverse controls))
+		return labelH
+	onTimer (Just keysym) downFor (a:aLeft) ((p,c):controls) = do
+		black <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0 0
+		red <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0xff 0 0
+		SDL.fillRect win (jRect 0 0 windowWidth windowHeight) black -- erase screen
+
+		labelH <- drawLabelAndPlayers a controls
+
+		(w, h) <- SDL.TTF.utf8Size menuFont (sdlKeyName keysym)
+		SDL.fillRect win (jRect 10 38 (barWidth downFor) (h+4)) red
+		drawText win (centre w) (15+labelH) menuFont (sdlKeyName keysym) (SDL.Color 0xff 0xff 0xff)
+
+		SDL.flip win
+
+		if downFor > 20 then
+				let cs = (p,addBinding (keysym, a) c):controls in
+				if null aLeft then
+					loop Nothing 0 kActions ((0, KeyboardControl []):cs)
+				else
+					loop Nothing 0 aLeft cs
+			else
+				loop (Just keysym) (downFor+1) (a:aLeft) ((p,c):controls)
+
+	onTimer keyDown downFor (a:aLeft) controls = do
+		black <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0 0
+		SDL.fillRect win (jRect 0 0 windowWidth windowHeight) black -- erase screen
+		drawLabelAndPlayers a (tail controls)
+		SDL.flip win
+		loop keyDown (downFor+1) (a:aLeft) controls
+
+withExternalLibs f = SDL.withInit [SDL.InitEverything] $ do
+	H.initChipmunk
+	SDL.TTF.init
+
+	f
+
+	SDL.TTF.quit
 	SDL.quit
+
+main = withExternalLibs $ do
+	forkIO_ $ timer frameTime (SDL.tryPushEvent $ SDL.User SDL.UID0 0 nullPtr nullPtr)
+	win <- SDL.setVideoMode windowWidth windowHeight 16 [SDL.HWSurface,SDL.HWAccel,SDL.AnyFormat,SDL.DoubleBuf]
+	soldier <- SDL.load "soldier.png"
+	princess <- SDL.load "princess.png"
+	menuFont <- SDL.TTF.openFont "./PortLligatSans-Regular.ttf" 20
+
+	Right anis <- fmap (parseOnly player_parser) $ T.readFile "./soldier.player"
+
+	playerJoinLoop win menuFont [(anis, soldier), (anis, princess)]
