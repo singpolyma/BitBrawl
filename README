@@ -2,6 +2,7 @@ This code is pretty hacky right now.  I don't have a Makefile yet (run with runh
 
 Dependencies:
 
+libghc-random-dev
 libghc-sdl-dev
 libghc-sdl-ttf-dev
 libghc-sdl-image-dev

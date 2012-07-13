@@ -2,8 +2,11 @@ import Control.Monad
 import Control.Applicative
 import Control.Concurrent (forkIO, threadDelay)
 import Foreign.Ptr (nullPtr)
+import Data.Ord
 import Data.Char hiding (Space)
+import Data.List
 import Data.Word
+import System.Random
 import Data.StateVar
 import Data.Attoparsec.Text
 
@@ -121,31 +124,36 @@ gameLoop win gameSpace players = do
 		SDL.User SDL.UID0 _ _ _ -> do
 			ticks <- SDL.getTicks
 			gameSpace' <- doPhysics ticks
-			player' <- doDrawing ticks
-			next gameSpace' player'
+			players' <- doDrawing ticks
+			next gameSpace' players'
+
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
-			next gameSpace (updateAnimation $ handleKeyboard KeyDown keysym)
+			next gameSpace (map updateAnimation $ handleKeyboard KeyDown keysym)
 		SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
-			next gameSpace (updateAnimation $ handleKeyboard KeyUp keysym)
+			next gameSpace (map updateAnimation $ handleKeyboard KeyUp keysym)
+
 		SDL.Quit -> return ()
-		_ -> print e >> next gameSpace player
+		_ -> print e >> next gameSpace players
 	where
-	next s p = gameLoop win s [p]
+	next s p = gameLoop win s p
 
 	handleAction (Face d) p = p {direction = d}
 	handleAction (Go s) p = p {speed = s}
 
-	player = head players
-
 	handleKeyboard keystate keysym =
-		foldr handleAction player (comboKeyboard keystate $ getKeyAction (controls player) keysym)
-	comboKeyboard KeyDown (Just (KFace d))
+		map (\player ->
+			foldr handleAction player (
+				comboKeyboard player keystate $ getKeyAction (controls player) keysym
+			)
+		) players
+
+	comboKeyboard player KeyDown (Just (KFace d))
 		| speed player == 0 = [Face d, Go playerSpeed]
 		| otherwise = [Face $ setOneAxis (direction player) d, Go playerSpeed]
-	comboKeyboard KeyUp (Just (KFace d))
+	comboKeyboard player KeyUp (Just (KFace d))
 		| null (unsetOneAxis (direction player) d) = [Go 0]
 		| otherwise = [Face $ head $ unsetOneAxis (direction player) d]
-	comboKeyboard _ _ = []
+	comboKeyboard _ _ _ = []
 
 	setOneAxis d E
 		| N `elem` splitDirection d = NE
@@ -182,28 +190,32 @@ gameLoop win gameSpace players = do
 		| speed > 0 = p {animation = (anis ! "walk" ! d, ticks)}
 		| otherwise = p {animation = (anis ! "idle" ! d, ticks)}
 
-	doPhysics ticks = do
+	setPlayerVelocity player = do
 		let d = H.fromAngle (directionToRadians $ direction player)
 		H.velocity (control player) $= (H.Vector (speed player) 0 `H.rotate` d)
+	doPhysics ticks = do
+		mapM setPlayerVelocity players
 		let (Space hSpace spaceTicks dtRemainder) = gameSpace
 		let time = (ticks - spaceTicks) + dtRemainder
 		(time `div` frameTime) `timesLoop` (H.step hSpace (frameTime/1000))
 		return $ Space hSpace ticks (time `mod` frameTime)
-	doDrawing ticks =
+	advancePlayerAnimation player ticks =
 		let (ani,aniTicks) = advanceAnimation (animation player) ticks in
-		if aniTicks == (snd $ animation player) then
-			-- Animation has not advanced, so player has not changed
-			return player
-		else do
-			(x, y) <- playerPosition player
-			let box = jRect x y 64 64
+		player {animation = (ani, aniTicks)}
+	drawPlayer player (x,y) = do
+		let box = jRect x y 64 64
+		SDL.blitSurface (sprites player) (clipAnimation $ fst $ animation player) win box
+	doDrawing ticks = do
+		let players' = map (`advancePlayerAnimation` ticks) players
+		black <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0 0
+		-- We don't know where the players were before. Erase whole screen
+		SDL.fillRect win (jRect 0 0 640 480) black
 
-			black <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0 0
-			-- We don't know where the player was before. Erase whole screen
-			SDL.fillRect win (jRect 0 0 640 480) black
-			SDL.blitSurface (sprites player) (clipAnimation ani) win box
-			SDL.flip win
-			return (player {animation = (ani, aniTicks)})
+		playerPositions <- mapM playerPosition players'
+		mapM (uncurry drawPlayer) (sortBy (comparing (snd.snd)) (zip players' playerPositions))
+
+		SDL.flip win
+		return players'
 
 newPlayer :: H.Space -> SDL.Surface -> Animations -> Control -> Ticks -> H.CpFloat -> IO Player
 newPlayer space sprites anis controls startTicks mass = do
@@ -215,9 +227,9 @@ newPlayer space sprites anis controls startTicks mass = do
 	H.spaceAdd space body
 	H.spaceAdd space shape
 
-	-- Chipmunk has the point for the centre of the base of the sprite
-	-- So (64,-64) will draw at (0,0) in SDL
-	H.position body $= H.Vector 64 (-64)
+	x <- getStdRandom (randomR (32,600))
+	y <- getStdRandom (randomR (-64,-800))
+	H.position body $= H.Vector x y
 
 	-- Create control body and joint it up
 	control <- H.newBody H.infinity H.infinity
@@ -232,7 +244,7 @@ newPlayer space sprites anis controls startTicks mass = do
 		H.setMaxBias bias constraint
 		H.setMaxForce force constraint
 	moment = H.momentForShape mass shapeType (H.Vector 0 0)
-	shapeType = H.Circle 32
+	shapeType = H.Circle 16
 
 forkIO_ :: IO a -> IO ()
 forkIO_ f = (forkIO (f >> return ())) >> return ()
