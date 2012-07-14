@@ -7,13 +7,6 @@ libghc-sdl-dev
 libghc-sdl-ttf-dev
 libghc-sdl-image-dev
 libghc-attoparsec-dev >= 0.10.0.0
+libghc-hipmunk-dev >= 5.2.0.9
 
 (also installable from cabal)
-
-Also, Hipmunk, but with a patch applied that has not yet been mainlined.  I may make my fork available soon if the maintainers do not mainline it.  Using Hipmunk as-is may be possible, but the physics may not react as expected.
-
-The test art that is hardcoded in right now is:
-
-<http://lpc.opengameart.org/static/lpc-style-guide/_images/soldier.png>
-<http://lpc.opengameart.org/static/lpc-style-guide/_images/princess.png>
-<http://lpc.opengameart.org/static/lpc-style-guide/_images/grass.png>
