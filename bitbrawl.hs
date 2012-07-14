@@ -102,11 +102,11 @@ getProgramDataDirs = do
 	dirs <- filterM doesDirectoryExist =<< map (</> programName) `fmap` getDataDirs
 	return (dirs ++ [pwd])
 
-findPlayerFiles :: IO [FilePath]
-findPlayerFiles = do
+findDataFiles :: (FilePath -> Bool) -> IO [FilePath]
+findDataFiles f = do
 	dirs <- getProgramDataDirs
 	files <- concat `fmap` mapM dirContents dirs
-	return $ filter ((==".player") . takeExtension) files
+	return $ filter f files
 	where
 	dirContents x = mapM (canonicalizePath  . normalise . (x </>)) =<< getDirectoryContents x
 
@@ -427,9 +427,10 @@ main = withExternalLibs $ do
 	forkIO_ $ timer frameTime (SDL.tryPushEvent $ SDL.User SDL.UID0 0 nullPtr nullPtr)
 	win <- SDL.setVideoMode windowWidth windowHeight 16 [SDL.HWSurface,SDL.HWAccel,SDL.AnyFormat,SDL.DoubleBuf]
 
-	menuFont <- SDL.TTF.openFont "./PortLligatSans-Regular.ttf" 20
+	menuFontPath <- fmap head $ findDataFiles ((=="PortLligatSans-Regular.ttf") . takeFileName)
+	menuFont <- SDL.TTF.openFont menuFontPath 20
 
-	pcs <- findPlayerFiles >>= mapM (\p -> do
+	pcs <- findDataFiles ((==".player") . takeExtension) >>= mapM (\p -> do
 			Right anis <- fmap (parseOnly player_parser) $ T.readFile p
 			sprites <- SDL.load $ replaceExtension p "png"
 			return (anis, sprites)
