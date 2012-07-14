@@ -5,8 +5,12 @@ import Foreign.Ptr (nullPtr)
 import Data.Ord
 import Data.Char hiding (Space)
 import Data.List
+import Data.Maybe
 import Data.Word
 import System.Random
+import System.FilePath
+import System.Directory
+import System.Environment (getEnv)
 import Data.StateVar
 import Data.Attoparsec.Text
 
@@ -57,6 +61,9 @@ data Control = KeyboardControl [(SDLKey, KeyboardAction)] deriving (Show, Eq)
 
 data Space = Space H.Space Ticks Ticks
 
+programName :: String
+programName = "bitbrawl"
+
 frameRate :: (Num a) => a
 frameRate = 30
 
@@ -71,6 +78,37 @@ windowWidth = 800
 
 windowHeight :: (Num a) => a
 windowHeight = 600
+
+maybeGetEnv :: String -> IO (Maybe String)
+maybeGetEnv k = do
+	v <- fmap Just (getEnv k) `catch` const (return Nothing)
+	case v of
+		(Just "") -> return Nothing
+		_ -> return v
+
+getDataDirs :: IO [FilePath]
+getDataDirs = do
+	home <- getHomeDirectory
+	home_data <- fmap (fromMaybe (home_data_default home)) $ maybeGetEnv "XDG_DATA_HOME"
+	data_dirs <- fmap (fromMaybe data_default) $ fmap (fmap splitSearchPath) $ maybeGetEnv "XDG_DATA_DIRS"
+	filterM doesDirectoryExist (home_data:data_dirs)
+	where
+	data_default = ["usr" </> "local" </> "share", "usr" </> "share"]
+	home_data_default home = home </> ".local" </> "share"
+
+getProgramDataDirs :: IO [FilePath]
+getProgramDataDirs = do
+	pwd <- getCurrentDirectory
+	dirs <- filterM doesDirectoryExist =<< map (</> programName) `fmap` getDataDirs
+	return (dirs ++ [pwd])
+
+findPlayerFiles :: IO [FilePath]
+findPlayerFiles = do
+	dirs <- getProgramDataDirs
+	files <- concat `fmap` mapM dirContents dirs
+	return $ filter ((==".player") . takeExtension) files
+	where
+	dirContents x = mapM (canonicalizePath  . normalise . (x </>)) =<< getDirectoryContents x
 
 timer :: Int -> IO a -> IO ()
 timer t f = do
@@ -388,10 +426,13 @@ withExternalLibs f = SDL.withInit [SDL.InitEverything] $ do
 main = withExternalLibs $ do
 	forkIO_ $ timer frameTime (SDL.tryPushEvent $ SDL.User SDL.UID0 0 nullPtr nullPtr)
 	win <- SDL.setVideoMode windowWidth windowHeight 16 [SDL.HWSurface,SDL.HWAccel,SDL.AnyFormat,SDL.DoubleBuf]
-	soldier <- SDL.load "soldier.png"
-	princess <- SDL.load "princess.png"
+
 	menuFont <- SDL.TTF.openFont "./PortLligatSans-Regular.ttf" 20
 
-	Right anis <- fmap (parseOnly player_parser) $ T.readFile "./soldier.player"
+	pcs <- findPlayerFiles >>= mapM (\p -> do
+			Right anis <- fmap (parseOnly player_parser) $ T.readFile p
+			sprites <- SDL.load $ replaceExtension p "png"
+			return (anis, sprites)
+		)
 
-	playerJoinLoop win menuFont [(anis, soldier), (anis, princess)]
+	playerJoinLoop win menuFont pcs
