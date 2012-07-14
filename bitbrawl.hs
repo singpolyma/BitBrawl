@@ -209,7 +209,7 @@ gameLoop win gameSpace players = do
 		let players' = map (`advancePlayerAnimation` ticks) players
 		black <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0 0
 		-- We don't know where the players were before. Erase whole screen
-		SDL.fillRect win (jRect 0 0 640 480) black
+		SDL.fillRect win (jRect 0 0 windowWidth windowHeight) black
 
 		playerPositions <- mapM playerPosition players'
 		mapM (uncurry drawPlayer) (sortBy (comparing (snd.snd)) (zip players' playerPositions))
@@ -227,8 +227,8 @@ newPlayer space sprites anis controls startTicks mass = do
 	H.spaceAdd space body
 	H.spaceAdd space shape
 
-	x <- getStdRandom (randomR (32,600))
-	y <- getStdRandom (randomR (-64,-800))
+	x <- getStdRandom (randomR (32,windowWidth-32))
+	y <- getStdRandom (randomR (-64,-windowHeight))
 	H.position body $= H.Vector x y
 
 	-- Create control body and joint it up
