@@ -354,6 +354,11 @@ playerJoinLoop win menuFont grass pcs =
 	loop Nothing 0 kActions [(0, KeyboardControl [])]
 	where
 	kActions = [KFace E, KFace N, KFace W, KFace S, KStart]
+	kActionString (KFace E) = "East (Right)"
+	kActionString (KFace N) = "North (Up)"
+	kActionString (KFace W) = "West (Left)"
+	kActionString (KFace S) = "South (Down)"
+	kActionString KStart = "Start"
 	loop keyDown downFor aLeft controls = do
 		e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 		case e of
@@ -383,7 +388,7 @@ playerJoinLoop win menuFont grass pcs =
 		SDL.blitSurface rendered Nothing win (jRect x y 0 0)
 	centre w = (windowWidth `div` 2) - (w `div` 2)
 	drawActionLabel pnum a = do
-		let s = "Hold down " ++ (show a) ++ " for Player " ++ (show pnum)
+		let s = "Hold down " ++ (kActionString a) ++ " for Player " ++ (show pnum)
 		(w, h) <- SDL.TTF.utf8Size menuFont s
 		drawText win (centre w) 10 menuFont s (SDL.Color 0xff 0xff 0xff)
 		return h
