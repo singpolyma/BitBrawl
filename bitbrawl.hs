@@ -279,6 +279,15 @@ startGame win controls = do
 	gameSpace <- H.newSpace
 	startTicks <- SDL.getTicks
 
+	-- Block off edges of screen
+	edgesBody <- H.newBody H.infinity H.infinity
+	addStatic gameSpace =<< mapM (pinShape edgesBody) [
+			line (windowWidth, 0) (windowWidth, -windowHeight),
+			line (0, 0) (windowWidth, 0),
+			line (0, 0) (0, -windowHeight),
+			line (0, -windowHeight) (windowWidth, -windowHeight)
+		]
+
 	players <- mapM (\((anis,sprites), c) ->
 			newPlayer gameSpace sprites anis c startTicks 10
 		) controls
@@ -286,6 +295,10 @@ startGame win controls = do
 	gameLoop win (Space gameSpace startTicks 0) players
 
 	H.freeSpace gameSpace
+	where
+	addStatic space = mapM_ (H.spaceAdd space . H.Static)
+	pinShape body shape = H.newShape body shape (H.Vector 0 0)
+	line (x1, y1) (x2, y2) = H.LineSegment (H.Vector x1 y1) (H.Vector x2 y2) 0
 
 playerJoinLoop win menuFont pcs =
 	loop Nothing 0 kActions [(0, KeyboardControl [])]
