@@ -311,8 +311,7 @@ playerJoinLoop win menuFont pcs =
 				onTimer keyDown downFor aLeft controls
 			SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) -> do
 				let (existing, controls') = foldr (\(p,c) (done, xs) ->
-						let a = getKeyAction c keysym in
-						case a of
+						case getKeyAction c keysym of
 							(Just (KFace E)) -> (1, ((p+1) `mod` (length pcs),c):xs)
 							(Just (KFace W)) -> (1, ((p+(length pcs)-1) `mod` (length pcs),c):xs)
 							(Just KStart) -> (-1, (p,c):xs)
