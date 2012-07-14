@@ -156,7 +156,20 @@ clipAnimation ani = jRect (64*(frame ani)) (64*(row ani)) 64 64
 
 getKeyAction (KeyboardControl c) keysym = lookup keysym c
 
-gameLoop win gameSpace players = do
+generateGrass :: SDL.Surface -> IO SDL.Surface
+generateGrass sprites = do
+	surface <- SDL.createRGBSurface [SDL.HWSurface, SDL.AnyFormat] windowWidth windowHeight 16 0 0 0 0
+	mapM_ (\y ->
+			mapM_ (\x -> do
+				SDL.blitSurface sprites (jRect 32 rowy width 32) surface (jRect x y 0 0)
+			) [0, width .. windowWidth]
+		) [0, 32 .. windowHeight]
+	return surface
+	where
+	width = 2 * 32
+	rowy = 5 * 32
+
+gameLoop win gameSpace grass players = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	case e of
 		SDL.User SDL.UID0 _ _ _ -> do
@@ -173,7 +186,7 @@ gameLoop win gameSpace players = do
 		SDL.Quit -> return ()
 		_ -> print e >> next gameSpace players
 	where
-	next s p = gameLoop win s p
+	next s p = gameLoop win s grass p
 
 	handleAction (Face d) p = p {direction = d}
 	handleAction (Go s) p = p {speed = s}
@@ -245,9 +258,8 @@ gameLoop win gameSpace players = do
 		SDL.blitSurface (sprites player) (clipAnimation $ fst $ animation player) win box
 	doDrawing ticks = do
 		let players' = map (`advancePlayerAnimation` ticks) players
-		black <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0 0
 		-- We don't know where the players were before. Erase whole screen
-		SDL.fillRect win (jRect 0 0 windowWidth windowHeight) black
+		SDL.blitSurface grass Nothing win (jRect 0 0 0 0)
 
 		playerPositions <- mapM playerPosition players'
 		mapM (uncurry drawPlayer) (sortBy (comparing (snd.snd)) (zip players' playerPositions))
@@ -313,7 +325,7 @@ player_parser = do
 
 sdlKeyName = drop 5 . show
 
-startGame win controls = do
+startGame win grass controls = do
 	gameSpace <- H.newSpace
 	startTicks <- SDL.getTicks
 
@@ -330,7 +342,7 @@ startGame win controls = do
 			newPlayer gameSpace sprites anis c startTicks 10
 		) controls
 
-	gameLoop win (Space gameSpace startTicks 0) players
+	gameLoop win (Space gameSpace startTicks 0) grass players
 
 	H.freeSpace gameSpace
 	where
@@ -338,7 +350,7 @@ startGame win controls = do
 	pinShape body shape = H.newShape body shape (H.Vector 0 0)
 	line (x1, y1) (x2, y2) = H.LineSegment (H.Vector x1 y1) (H.Vector x2 y2) 0
 
-playerJoinLoop win menuFont pcs =
+playerJoinLoop win menuFont grass pcs =
 	loop Nothing 0 kActions [(0, KeyboardControl [])]
 	where
 	kActions = [KFace E, KFace N, KFace W, KFace S, KStart]
@@ -359,7 +371,7 @@ playerJoinLoop win menuFont pcs =
 				case existing of
 					0 -> loop (Just keysym) 0 aLeft controls'
 					1 -> loop Nothing 0 aLeft controls'
-					-1 -> startGame win (tail $ map (\(p,c) -> (pcs!!p,c)) controls)
+					-1 -> startGame win grass (tail $ map (\(p,c) -> (pcs!!p,c)) controls)
 			SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
 				loop (if (Just keysym) == keyDown then Nothing else keyDown) 0 aLeft controls
 			SDL.Quit -> return ()
@@ -386,9 +398,8 @@ playerJoinLoop win menuFont pcs =
 			) (zip [0..] (reverse controls))
 		return labelH
 	onTimer (Just keysym) downFor (a:aLeft) ((p,c):controls) = do
-		black <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0 0
 		red <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0xff 0 0
-		SDL.fillRect win (jRect 0 0 windowWidth windowHeight) black -- erase screen
+		SDL.blitSurface grass Nothing win (jRect 0 0 0 0) -- erase screen
 
 		labelH <- drawLabelAndPlayers a controls
 
@@ -408,8 +419,7 @@ playerJoinLoop win menuFont pcs =
 				loop (Just keysym) (downFor+1) (a:aLeft) ((p,c):controls)
 
 	onTimer keyDown downFor (a:aLeft) controls = do
-		black <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0 0
-		SDL.fillRect win (jRect 0 0 windowWidth windowHeight) black -- erase screen
+		SDL.blitSurface grass Nothing win (jRect 0 0 0 0) -- erase screen
 		drawLabelAndPlayers a (tail controls)
 		SDL.flip win
 		loop keyDown (downFor+1) (a:aLeft) controls
@@ -430,10 +440,13 @@ main = withExternalLibs $ do
 	menuFontPath <- fmap head $ findDataFiles ((=="PortLligatSans-Regular.ttf") . takeFileName)
 	menuFont <- SDL.TTF.openFont menuFontPath 20
 
+	grassPath <- fmap head $ findDataFiles ((=="grass.png") . takeFileName)
+	grass <- SDL.load grassPath >>= generateGrass
+
 	pcs <- findDataFiles ((==".player") . takeExtension) >>= mapM (\p -> do
 			Right anis <- fmap (parseOnly player_parser) $ T.readFile p
 			sprites <- SDL.load $ replaceExtension p "png"
 			return (anis, sprites)
 		)
 
-	playerJoinLoop win menuFont pcs
+	playerJoinLoop win menuFont grass pcs
