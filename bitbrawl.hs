@@ -235,7 +235,6 @@ gameLoop win grass gameSpace players projectiles = do
 					else
 						p
 				) [0..] players
-			print $ map damageAmt players'
 			next gameSpace players' projectiles''
 
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
@@ -380,6 +379,10 @@ gameLoop win grass gameSpace players projectiles = do
 	drawPlayer player (x,y) = do
 		let box = jRect x y 64 64
 		SDL.blitSurface (sprites player) (clipAnimation $ fst $ animation player) win box
+
+		red <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0xff 0 0
+		let damageBar = ((64-32) * (damageAmt player)) `div` 100
+		SDL.fillRect win (jRect (x+16) (y-7) damageBar 5) red
 	doDrawing ticks players = do
 		let players' = map (`advancePlayerAnimation` ticks) players
 		-- We don't know where the players were before. Erase whole screen
