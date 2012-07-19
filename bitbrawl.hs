@@ -73,7 +73,7 @@ data Player = Player {
 		controls   :: Control,
 		animation  :: (Animation, Ticks),
 		animations :: Animations,
-		ability    :: Maybe DoingAbility,
+		ability    :: (Maybe DoingAbility, Maybe DoingAbility),
 		direction  :: Direction,
 		speed      :: Speed,
 		damageAmt  :: Int
@@ -200,7 +200,7 @@ generateGrass sprites = do
 	rowy = 5 * 32
 
 updateAnimation p@(Player {
-			ability = abi,
+			ability = (abi, _),
 			direction = d,
 			animation = (_, ticks),
 			animations = anis,
@@ -238,22 +238,33 @@ gameLoop win grass gameSpace players projectiles = do
 			next gameSpace players' projectiles''
 
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
-			next gameSpace (map updateAnimation $ handleKeyboard KeyDown keysym) projectiles
+			next gameSpace (handleKeyboard KeyDown keysym) projectiles
 		SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
-			next gameSpace (map updateAnimation $ handleKeyboard KeyUp keysym) projectiles
+			next gameSpace (handleKeyboard KeyUp keysym) projectiles
 
 		SDL.Quit -> return ()
 		_ -> print e >> next gameSpace players projectiles
 	where
 	next = gameLoop win grass
 
-	handleAction (Face d) p = p {direction = d}
-	handleAction (Go s) p = p {speed = s}
-	handleAction EndAbility p = p {ability = (\x -> x {ended = Just (snd $ animation p)}) `fmap` ability p}
-	handleAction (Ability s) p = p { ability = do
+	handleAction (Face d) p = updateAnimation $ p {direction = d}
+	handleAction (Go s) p = updateAnimation $ p {speed = s}
+	handleAction EndAbility p =
+		let time = (\x -> x {ended = Just $ snd $ animation p}) in
+		case ability p of
+			(Just (DoingAbility {ended = Nothing}), _) ->
+				p {ability = (first.fmap) time (ability p)}
+			(Just (DoingAbility {ended = Just _}), _) ->
+				p {ability = (second.fmap) time (ability p)}
+	handleAction (Ability s) p =
+		let doing = do
 			abi <- fst $ (animations p) ! s
 			return $ DoingAbility s abi (snd $ animation p) Nothing
-		}
+		in
+		case ability p of
+			(Nothing, Nothing) -> updateAnimation $ p {ability = (doing, Nothing)}
+			(Just a, Nothing) -> p {ability = (Just a, doing)}
+			(Just a, Just b) -> p {ability = (Just a, if isJust doing then doing else Just b)}
 
 	handleKeyboard keystate keysym =
 		map (\player ->
@@ -308,8 +319,8 @@ gameLoop win grass gameSpace players projectiles = do
 			when dead $ H.spaceRemove s (pshape p)
 			return $ not dead
 		) projectiles
-	doAbility ticks p@(Player {ability = Just (DoingAbility _ a s (Just e))})
-		| (ticks - e) >= (releaseLen a) = do
+	doAbility ticks p@(Player {ability = (Just (DoingAbility _ a s (Just e)), nextAbility)})
+		| ((toInteger ticks) - (toInteger e)) >= toInteger (releaseLen a) = do
 			let len = fromIntegral $ e - s
 			let ratio = (if len == 0 then 1 else len) / (fromIntegral $ chargeLen a)
 			let damage = floor $ minimum [fromIntegral $ maxDamage a, (fromIntegral $ maxDamage a) * ratio]
@@ -329,7 +340,13 @@ gameLoop win grass gameSpace players projectiles = do
 			H.spaceAdd s body
 			H.spaceAdd s shp
 
-			return (updateAnimation $ p { ability = Nothing }, Just $ Projectile Nothing damage shp (duration a + ticks))
+			let nextAbility' = (\a ->
+					a {
+						started = ticks,
+						ended = (\e -> ticks + (e - (started a))) `fmap` ended a
+					}
+				) `fmap` nextAbility
+			return (updateAnimation $ p { ability = (nextAbility', Nothing) }, Just $ Projectile Nothing damage shp (duration a + ticks))
 	doAbility _ p = return (p, Nothing)
 	doAbilities players ticks =
 		second catMaybes `fmap` unzip `fmap` mapM (doAbility ticks) players
@@ -394,7 +411,7 @@ newPlayer space sprites anis controls startTicks mass group = do
 	mkConstraint  control body (H.Pivot2 (H.Vector 0 0) (H.Vector 0 0)) 0 10000
 	mkConstraint control body (H.Gear 0 1) 1.2 50000
 
-	return $ Player sprites shape control controls (anis ! "idle" !# E, startTicks) anis Nothing E 0 0
+	return $ Player sprites shape control controls (anis ! "idle" !# E, startTicks) anis (Nothing, Nothing) E 0 0
 	where
 	mkConstraint control body c bias force = do
 		constraint <- H.newConstraint control body c
