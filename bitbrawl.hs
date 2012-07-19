@@ -9,6 +9,7 @@ import Data.Char hiding (Space)
 import Data.List
 import Data.Maybe
 import Data.Word
+import Data.IORef
 import System.Random
 import System.FilePath
 import System.Directory
@@ -220,22 +221,9 @@ gameLoop win grass gameSpace players projectiles = do
 			projectiles' <- doProjectiles ticks
 			(players', newProjectiles) <- doAbilities players ticks
 			let projectiles'' = projectiles' ++ newProjectiles
-			gameSpace' <- doPhysics ticks projectiles''
-			players'' <- doDrawing ticks players'
-			next gameSpace' players'' projectiles''
-
-		SDL.User SDL.UID1 playerIdx pridxPtr _ -> do
-			-- FIXME: THIS IS TOTALLY BROKEN
-			pridx <- (peek $ castPtr pridxPtr) :: IO Int
-			free pridxPtr -- ick
-			let ([(_,pr)], projectiles') = partition (\(idx,pr) -> idx == pridx) (zip [0..] projectiles)
-			let projectiles'' = map snd projectiles'
-			let players' = zipWith (\idx p -> if idx == playerIdx then
-						p {damageAmt = (damageAmt p) + (damage pr)}
-					else
-						p
-				) [0..] players
-			next gameSpace players' projectiles''
+			(gameSpace', players'', projectiles''') <- doPhysics ticks projectiles'' players'
+			players''' <- doDrawing ticks players''
+			next gameSpace' players''' projectiles'''
 
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
 			next gameSpace (handleKeyboard KeyDown keysym) projectiles
@@ -350,19 +338,34 @@ gameLoop win grass gameSpace players projectiles = do
 	doAbility _ p = return (p, Nothing)
 	doAbilities players ticks =
 		second catMaybes `fmap` unzip `fmap` mapM (doAbility ticks) players
-	doPhysics ticks projectiles = do
+	doPhysics ticks projectiles players = do
 		mapM setPlayerVelocity players
 		let (Space hSpace spaceTicks dtRemainder) = gameSpace
+
+		mutablePlayers <- mapM newIORef players
+		mutableProjectiles <- mapM (newIORef . Just) projectiles
 
 		-- Reset collision handler every time so the right stuff is in scope
 		H.addCollisionHandler hSpace 0 1 (H.Handler
 				(Just (do
 					(plshp, prshp) <- H.shapes
-					let Just plidx = findIndex ((==plshp) . shape) players
-					let Just pridx = findIndex ((==prshp) . pshape) projectiles
-					pridxPtr <- liftIO $ castPtr `fmap` (new pridx)
-					liftIO $ SDL.tryPushEvent $
-						SDL.User SDL.UID1 plidx pridxPtr nullPtr
+
+					liftIO (do
+						let get' = (\f x -> fmap f (get x))
+						[pl] <- filterM (get' ((==plshp) . shape)) mutablePlayers
+						pr <- filterM (get' (\x -> fromMaybe False $ fmap ((==prshp) . pshape) x)) mutableProjectiles
+						case pr of
+							[pr] -> do
+								-- Projectile has hit so player is damaged
+								projectile <- fmap fromJust $ get pr
+								pl $~ (\player -> player {damageAmt = (damageAmt player) + (damage projectile)})
+
+								-- Projectile has hit, so it is gone
+								liftIO (pr $= Nothing)
+							_ -> return ()
+						)
+					H.postStep prshp (H.currentSpaceRemove prshp)
+
 					return False -- Do not run collision physics
 				))
 				Nothing
@@ -372,7 +375,10 @@ gameLoop win grass gameSpace players projectiles = do
 
 		let time = (ticks - spaceTicks) + dtRemainder
 		(time `div` frameTime) `timesLoop` (H.step hSpace (frameTime/1000))
-		return $ Space hSpace ticks (time `mod` frameTime)
+
+		players' <- mapM get mutablePlayers
+		projectiles' <- fmap catMaybes $ mapM get mutableProjectiles
+		return $ (Space hSpace ticks (time `mod` frameTime), players', projectiles')
 	advancePlayerAnimation player ticks =
 		let (ani,aniTicks) = advanceAnimation (animation player) ticks in
 		player {animation = (ani, aniTicks)}
