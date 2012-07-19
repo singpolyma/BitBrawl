@@ -1,7 +1,9 @@
 import Control.Monad
+import Control.Arrow
 import Control.Applicative
+import Control.Monad.IO.Class
 import Control.Concurrent (forkIO, threadDelay)
-import Foreign.Ptr (nullPtr)
+import Foreign (new, peek, free, nullPtr, castPtr)
 import Data.Ord
 import Data.Char hiding (Space)
 import Data.List
@@ -29,9 +31,33 @@ import qualified Physics.Hipmunk as H
 
 type Ticks = Word32
 type Speed = H.CpFloat
-type Animations = Map String (Map Direction Animation)
+type Animations = Map String (Maybe Ability, Map Direction Animation)
 
 data Direction = E | NE | N | NW | W | SW | S | SE deriving (Show, Read, Enum, Ord, Eq)
+
+data Projectile = Projectile {
+		pani   :: (Maybe Animation),
+		damage :: Int,
+		pshape :: H.Shape,
+		life   :: Ticks
+	}
+	deriving (Eq)
+
+data Ability = Attack {
+		maxDamage  :: Int,
+		chargeLen  :: Ticks,
+		releaseLen :: Ticks,
+		duration   :: Ticks
+	}
+	deriving (Show, Read, Eq)
+
+data DoingAbility = DoingAbility {
+		abiname  :: String,
+		dability :: Ability,
+		started  :: Ticks,
+		ended    :: Maybe Ticks
+	}
+	deriving (Show, Read, Eq)
 
 data Animation = Animation {
 		row    :: Int,
@@ -47,14 +73,16 @@ data Player = Player {
 		controls   :: Control,
 		animation  :: (Animation, Ticks),
 		animations :: Animations,
+		ability    :: Maybe DoingAbility,
 		direction  :: Direction,
-		speed      :: Speed
+		speed      :: Speed,
+		damageAmt  :: Int
 	}
 	deriving (Eq)
 
-data KeyboardAction = KFace Direction | KStart deriving (Show, Read, Eq)
+data KeyboardAction = KFace Direction | KAbility1 | KStart deriving (Show, Read, Eq)
 
-data Action = Face Direction | Go Speed deriving (Show, Read, Eq)
+data Action = Face Direction | Go Speed | Ability String | EndAbility deriving (Show, Read, Eq)
 
 data KeyState = KeyDown | KeyUp deriving (Show, Read, Enum, Ord, Eq)
 data Control = KeyboardControl [(SDLKey, KeyboardAction)] deriving (Show, Eq)
@@ -78,6 +106,8 @@ windowWidth = 800
 
 windowHeight :: (Num a) => a
 windowHeight = 600
+
+a !# b = (snd a) ! b
 
 maybeGetEnv :: String -> IO (Maybe String)
 maybeGetEnv k = do
@@ -169,27 +199,61 @@ generateGrass sprites = do
 	width = 2 * 32
 	rowy = 5 * 32
 
-gameLoop win gameSpace grass players = do
+updateAnimation p@(Player {
+			ability = abi,
+			direction = d,
+			animation = (_, ticks),
+			animations = anis,
+			speed = speed
+		}) =
+	p {animation = (ani', ticks)}
+	where
+	ani' | isJust abi = anis ! abiname (fromJust abi) !# d
+	     | speed > 0 = anis ! "walk" !# d
+	     | otherwise = anis ! "idle" !# d
+
+gameLoop win grass gameSpace players projectiles = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	case e of
 		SDL.User SDL.UID0 _ _ _ -> do
 			ticks <- SDL.getTicks
-			gameSpace' <- doPhysics ticks
-			players' <- doDrawing ticks
-			next gameSpace' players'
+			projectiles' <- doProjectiles ticks
+			(players', newProjectiles) <- doAbilities players ticks
+			let projectiles'' = projectiles' ++ newProjectiles
+			gameSpace' <- doPhysics ticks projectiles''
+			players'' <- doDrawing ticks players'
+			next gameSpace' players'' projectiles''
+
+		SDL.User SDL.UID1 playerIdx pridxPtr _ -> do
+			pridx <- (peek $ castPtr pridxPtr) :: IO Int
+			free pridxPtr -- ick
+			let ([(_,pr)], projectiles') = partition (\(idx,pr) -> idx == pridx) (zip [0..] projectiles)
+			let projectiles'' = map snd projectiles'
+			let players' = zipWith (\idx p -> if idx == playerIdx then
+						p {damageAmt = (damageAmt p) + (damage pr)}
+					else
+						p
+				) [0..] players
+			print $ map damageAmt players'
+			next gameSpace players' projectiles''
 
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
-			next gameSpace (map updateAnimation $ handleKeyboard KeyDown keysym)
+			next gameSpace (map updateAnimation $ handleKeyboard KeyDown keysym) projectiles
 		SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
-			next gameSpace (map updateAnimation $ handleKeyboard KeyUp keysym)
+			next gameSpace (map updateAnimation $ handleKeyboard KeyUp keysym) projectiles
 
 		SDL.Quit -> return ()
-		_ -> print e >> next gameSpace players
+		_ -> print e >> next gameSpace players projectiles
 	where
-	next s p = gameLoop win s grass p
+	next = gameLoop win grass
 
 	handleAction (Face d) p = p {direction = d}
 	handleAction (Go s) p = p {speed = s}
+	handleAction EndAbility p = p {ability = (\x -> x {ended = Just (snd $ animation p)}) `fmap` ability p}
+	handleAction (Ability s) p = p { ability = do
+			abi <- fst $ (animations p) ! s
+			return $ DoingAbility s abi (snd $ animation p) Nothing
+		}
 
 	handleKeyboard keystate keysym =
 		map (\player ->
@@ -204,6 +268,8 @@ gameLoop win gameSpace grass players = do
 	comboKeyboard player KeyUp (Just (KFace d))
 		| null (unsetOneAxis (direction player) d) = [Go 0]
 		| otherwise = [Face $ head $ unsetOneAxis (direction player) d]
+	comboKeyboard player KeyDown (Just KAbility1) = [Ability "ability1"]
+	comboKeyboard player KeyUp (Just KAbility1) = [EndAbility]
 	comboKeyboard _ _ _ = []
 
 	setOneAxis d E
@@ -232,21 +298,61 @@ gameLoop win gameSpace grass players = do
 		else
 			d'
 
-	updateAnimation p@(Player {
-				direction = d,
-				animation = (ani, ticks),
-				animations = anis,
-				speed = speed
-			})
-		| speed > 0 = p {animation = (anis ! "walk" ! d, ticks)}
-		| otherwise = p {animation = (anis ! "idle" ! d, ticks)}
-
 	setPlayerVelocity player = do
 		let d = H.fromAngle (directionToRadians $ direction player)
 		H.velocity (control player) $= (H.Vector (speed player) 0 `H.rotate` d)
-	doPhysics ticks = do
+	doProjectiles ticks =
+		let (Space s _ _) = gameSpace in
+		filterM (\p -> do
+			let dead = ticks > life p 
+			when dead $ H.spaceRemove s (pshape p)
+			return $ not dead
+		) projectiles
+	doAbility ticks p@(Player {ability = Just (DoingAbility _ a s (Just e))})
+		| (ticks - e) >= (releaseLen a) = do
+			let len = fromIntegral $ e - s
+			let ratio = (if len == 0 then 1 else len) / (fromIntegral $ chargeLen a)
+			let damage = floor $ minimum [fromIntegral $ maxDamage a, (fromIntegral $ maxDamage a) * ratio]
+			
+			let d = H.fromAngle (directionToRadians $ direction p)
+			let u = H.Vector 16 0 `H.rotate` d
+			physicsPos <- get $ H.position $ H.body $ shape p
+
+			body <- H.newBody H.infinity H.infinity
+			shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
+			H.position body $= physicsPos + u
+
+			(($=) (H.group shp)) =<< get (H.group $ shape p)
+			H.collisionType shp $= 1
+
+			let (Space s _ _) = gameSpace
+			H.spaceAdd s body
+			H.spaceAdd s shp
+
+			return (updateAnimation $ p { ability = Nothing }, Just $ Projectile Nothing damage shp (duration a + ticks))
+	doAbility _ p = return (p, Nothing)
+	doAbilities players ticks =
+		second catMaybes `fmap` unzip `fmap` mapM (doAbility ticks) players
+	doPhysics ticks projectiles = do
 		mapM setPlayerVelocity players
 		let (Space hSpace spaceTicks dtRemainder) = gameSpace
+
+		-- Reset collision handler every time so the right stuff is in scope
+		H.addCollisionHandler hSpace 0 1 (H.Handler
+				(Just (do
+					(plshp, prshp) <- H.shapes
+					let Just plidx = findIndex ((==plshp) . shape) players
+					let Just pridx = findIndex ((==prshp) . pshape) projectiles
+					pridxPtr <- liftIO $ castPtr `fmap` (new pridx)
+					liftIO $ SDL.tryPushEvent $
+						SDL.User SDL.UID1 plidx pridxPtr nullPtr
+					return False -- Do not run collision physics
+				))
+				Nothing
+				Nothing
+				Nothing
+			)
+
 		let time = (ticks - spaceTicks) + dtRemainder
 		(time `div` frameTime) `timesLoop` (H.step hSpace (frameTime/1000))
 		return $ Space hSpace ticks (time `mod` frameTime)
@@ -256,7 +362,7 @@ gameLoop win gameSpace grass players = do
 	drawPlayer player (x,y) = do
 		let box = jRect x y 64 64
 		SDL.blitSurface (sprites player) (clipAnimation $ fst $ animation player) win box
-	doDrawing ticks = do
+	doDrawing ticks players = do
 		let players' = map (`advancePlayerAnimation` ticks) players
 		-- We don't know where the players were before. Erase whole screen
 		SDL.blitSurface grass Nothing win (jRect 0 0 0 0)
@@ -267,8 +373,8 @@ gameLoop win gameSpace grass players = do
 		SDL.flip win
 		return players'
 
-newPlayer :: H.Space -> SDL.Surface -> Animations -> Control -> Ticks -> H.CpFloat -> IO Player
-newPlayer space sprites anis controls startTicks mass = do
+newPlayer :: H.Space -> SDL.Surface -> Animations -> Control -> Ticks -> H.CpFloat -> H.Group -> IO Player
+newPlayer space sprites anis controls startTicks mass group = do
 	-- Create body and shape with mass and moment, add to space
 	body <- H.newBody mass moment
 	shape <- H.newShape body shapeType (H.Vector 0 0)
@@ -276,6 +382,8 @@ newPlayer space sprites anis controls startTicks mass = do
 	H.friction shape $= 0.7
 	H.spaceAdd space body
 	H.spaceAdd space shape
+
+	H.group shape $= group
 
 	x <- getStdRandom (randomR (32,windowWidth-32))
 	y <- getStdRandom (randomR (-64,-windowHeight))
@@ -286,7 +394,7 @@ newPlayer space sprites anis controls startTicks mass = do
 	mkConstraint  control body (H.Pivot2 (H.Vector 0 0) (H.Vector 0 0)) 0 10000
 	mkConstraint control body (H.Gear 0 1) 1.2 50000
 
-	return $ Player sprites shape control controls (anis ! "idle" ! E, startTicks) anis E 0
+	return $ Player sprites shape control controls (anis ! "idle" !# E, startTicks) anis Nothing E 0 0
 	where
 	mkConstraint control body c bias force = do
 		constraint <- H.newConstraint control body c
@@ -310,12 +418,20 @@ player_parser = do
 		key <- takeWhile1 (\x -> not $ x == '{' || isSpace x)
 		skipSpace
 		char '{'
-		ani <- many directed_animation
+		skipSpace
+		abi <- option Nothing (fmap Just ability)
+		ani <- many (skipSpace >> directed_animation)
 		skipSpace
 		char '}'
-		return $ (T.unpack key, Map.fromList ani)
+		return $ (T.unpack key, (abi, Map.fromList ani))
+	ability = do
+		string $ T.pack "attack"
+		maxDamage <- ws_int
+		chargeLen <- fmap fromIntegral ws_int
+		releaseLen <- fmap fromIntegral ws_int
+		duration <- fmap fromIntegral ws_int
+		return (Attack maxDamage chargeLen releaseLen duration)
 	directed_animation = do
-		skipSpace
 		direction <- readOne ["NE", "NW", "SE", "SW", "E", "N", "W", "S"]
 		ani <- liftM3 Animation ws_int ws_int ws_int
 		skipWhile (\x -> isSpace x && not (isEndOfLine x)) *> endOfLine
@@ -338,11 +454,11 @@ startGame win grass controls = do
 			line (0, -windowHeight) (windowWidth, -windowHeight)
 		]
 
-	players <- mapM (\((anis,sprites), c) ->
-			newPlayer gameSpace sprites anis c startTicks 10
-		) controls
+	players <- mapM (\(i,((anis,sprites), c)) ->
+			newPlayer gameSpace sprites anis c startTicks 10 i
+		) (zip [1..] (reverse controls))
 
-	gameLoop win (Space gameSpace startTicks 0) grass players
+	gameLoop win grass (Space gameSpace startTicks 0) players []
 
 	H.freeSpace gameSpace
 	where
@@ -350,14 +466,16 @@ startGame win grass controls = do
 	pinShape body shape = H.newShape body shape (H.Vector 0 0)
 	line (x1, y1) (x2, y2) = H.LineSegment (H.Vector x1 y1) (H.Vector x2 y2) 0
 
+playerJoinLoop :: SDL.Surface -> SDL.TTF.Font -> SDL.Surface -> [(Animations, SDL.Surface)] -> IO ()
 playerJoinLoop win menuFont grass pcs =
 	loop Nothing 0 kActions [(0, KeyboardControl [])]
 	where
-	kActions = [KFace E, KFace N, KFace W, KFace S, KStart]
+	kActions = [KFace E, KFace N, KFace W, KFace S, KAbility1, KStart]
 	kActionString (KFace E) = "East (Right)"
 	kActionString (KFace N) = "North (Up)"
 	kActionString (KFace W) = "West (Left)"
 	kActionString (KFace S) = "South (Down)"
+	kActionString KAbility1 = "Ability 1"
 	kActionString KStart = "Start"
 	loop keyDown downFor aLeft controls = do
 		e <- SDL.waitEvent -- Have to use the expensive wait so timer works
@@ -399,7 +517,7 @@ playerJoinLoop win menuFont grass pcs =
 				let x = 10+(i*74)
 				let y = 20+(labelH*2)
 				drawText win x y menuFont ("Player "++show (i+1)) (SDL.Color 0xff 0xff 0xff)
-				SDL.blitSurface sprites (clipAnimation $ anis ! "idle" ! E) win (jRect x (y+labelH+3) 0 0)
+				SDL.blitSurface sprites (clipAnimation $ anis ! "idle" !# E) win (jRect x (y+labelH+3) 0 0)
 			) (zip [0..] (reverse controls))
 		return labelH
 	onTimer (Just keysym) downFor (a:aLeft) ((p,c):controls) = do
@@ -437,6 +555,7 @@ withExternalLibs f = SDL.withInit [SDL.InitEverything] $ do
 
 	SDL.TTF.quit
 	SDL.quit
+
 
 main = withExternalLibs $ do
 	forkIO_ $ timer frameTime (SDL.tryPushEvent $ SDL.User SDL.UID0 0 nullPtr nullPtr)
