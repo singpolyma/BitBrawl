@@ -225,6 +225,7 @@ gameLoop win grass gameSpace players projectiles = do
 			next gameSpace' players'' projectiles''
 
 		SDL.User SDL.UID1 playerIdx pridxPtr _ -> do
+			-- FIXME: THIS IS TOTALLY BROKEN
 			pridx <- (peek $ castPtr pridxPtr) :: IO Int
 			free pridxPtr -- ick
 			let ([(_,pr)], projectiles') = partition (\(idx,pr) -> idx == pridx) (zip [0..] projectiles)
