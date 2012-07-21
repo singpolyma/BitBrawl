@@ -77,7 +77,9 @@ data Player = Player {
 		ability    :: (Maybe DoingAbility, Maybe DoingAbility),
 		direction  :: Direction,
 		speed      :: Speed,
-		damageAmt  :: Int
+		energy     :: Int,
+		damageAmt  :: Int,
+		deaths     :: Int
 	}
 	deriving (Eq)
 
@@ -89,6 +91,15 @@ data KeyState = KeyDown | KeyUp deriving (Show, Read, Enum, Ord, Eq)
 data Control = KeyboardControl [(SDLKey, KeyboardAction)] deriving (Show, Eq)
 
 data Space = Space H.Space Ticks Ticks
+
+class CollisionType a where
+	collisionType :: a -> H.CollisionType
+
+instance CollisionType Player where
+	collisionType _ = 1
+
+instance CollisionType Projectile where
+	collisionType _ = 2
 
 programName :: String
 programName = "bitbrawl"
@@ -213,6 +224,37 @@ updateAnimation p@(Player {
 	     | speed > 0 = anis ! "walk" !# d
 	     | otherwise = anis ! "idle" !# d
 
+deathChance d e
+	| e < 1 = 100
+	| d < 50 = 0
+	| d < 60 = doE 1
+	| d < 70 = doE 4
+	| d < 80 = doE 6
+	| d < 90 = doE 8
+	| d < 100 = doE 10
+	| d < 110 = doE 30
+	| d < 120 = doE 60
+	| d < 130 = doE 90
+	| d < 140 = doE 97
+	| otherwise = doE 99
+	where
+	doE p = p `div` (e `div` 25)
+
+maybeEliminate player = do
+	x <- getStdRandom (randomR (0,99))
+	print (damageAmt player, energy player, chance, x)
+	-- When x < change, player in eliminated, respawn
+	if (x < chance) then do
+			x <- getStdRandom (randomR (32,windowWidth-32))
+			y <- getStdRandom (randomR (-64,-windowHeight))
+			(H.position $ H.body $ shape player) $= H.Vector x y
+			return $ player {damageAmt = 0, energy = 50, deaths = (deaths player) + 1}
+		else
+			return player
+	where
+	chance = deathChance (damageAmt player) (energy player)
+
+
 gameLoop win grass gameSpace players projectiles = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	case e of
@@ -319,10 +361,12 @@ gameLoop win grass gameSpace players projectiles = do
 
 			body <- H.newBody H.infinity H.infinity
 			shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
+			let newProjectile = Projectile Nothing damage shp (duration a + ticks)
+
 			H.position body $= physicsPos + u
 
 			(($=) (H.group shp)) =<< get (H.group $ shape p)
-			H.collisionType shp $= 1
+			H.collisionType shp $= collisionType newProjectile
 
 			let (Space s _ _) = gameSpace
 			H.spaceAdd s body
@@ -334,7 +378,7 @@ gameLoop win grass gameSpace players projectiles = do
 						ended = (\e -> ticks + (e - (started a))) `fmap` ended a
 					}
 				) `fmap` nextAbility
-			return (updateAnimation $ p { ability = (nextAbility', Nothing) }, Just $ Projectile Nothing damage shp (duration a + ticks))
+			return (updateAnimation $ p { ability = (nextAbility', Nothing) }, Just newProjectile)
 	doAbility _ p = return (p, Nothing)
 	doAbilities players ticks =
 		second catMaybes `fmap` unzip `fmap` mapM (doAbility ticks) players
@@ -346,7 +390,7 @@ gameLoop win grass gameSpace players projectiles = do
 		mutableProjectiles <- mapM (newIORef . Just) projectiles
 
 		-- Reset collision handler every time so the right stuff is in scope
-		H.addCollisionHandler hSpace 0 1 (H.Handler
+		H.addCollisionHandler hSpace (collisionType $ head players) (collisionType $ head projectiles) (H.Handler
 				(Just (do
 					(plshp, prshp) <- H.shapes
 
@@ -359,6 +403,7 @@ gameLoop win grass gameSpace players projectiles = do
 								-- Projectile has hit so player is damaged
 								projectile <- fmap fromJust $ get pr
 								pl $~ (\player -> player {damageAmt = (damageAmt player) + (damage projectile)})
+								get pl >>= maybeEliminate >>= (($=) pl)
 
 								-- Projectile has hit, so it is gone
 								liftIO (pr $= Nothing)
@@ -378,6 +423,7 @@ gameLoop win grass gameSpace players projectiles = do
 
 		players' <- mapM get mutablePlayers
 		projectiles' <- fmap catMaybes $ mapM get mutableProjectiles
+
 		return $ (Space hSpace ticks (time `mod` frameTime), players', projectiles')
 	advancePlayerAnimation player ticks =
 		let (ani,aniTicks) = advanceAnimation (animation player) ticks in
@@ -421,7 +467,9 @@ newPlayer space sprites anis controls startTicks mass group = do
 	mkConstraint  control body (H.Pivot2 (H.Vector 0 0) (H.Vector 0 0)) 0 10000
 	mkConstraint control body (H.Gear 0 1) 1.2 50000
 
-	return $ Player sprites shape control controls (anis ! "idle" !# E, startTicks) anis (Nothing, Nothing) E 0 0
+	let player = Player sprites shape control controls (anis ! "idle" !# E, startTicks) anis (Nothing, Nothing) E 0 50 0 0
+	H.collisionType shape $= collisionType player
+	return player
 	where
 	mkConstraint control body c bias force = do
 		constraint <- H.newConstraint control body c
