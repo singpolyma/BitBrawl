@@ -381,10 +381,10 @@ gameLoop win grass gameSpace players projectiles = do
 		) projectiles
 	doAbility ticks p@(Player {ability = (Just (DoingAbility _ a s (Just e)), nextAbility)})
 		| ((toInteger ticks) - (toInteger e)) >= toInteger (releaseLen a) = do
-			let len = fromIntegral $ e - s
-			let ratio = (if len == 0 then 1 else len) / (fromIntegral $ chargeLen a)
+			let len = fromIntegral $ (toInteger e) - (toInteger s)
+			let ratio = (if len < 1 then 1 else len) / (fromIntegral $ chargeLen a)
 			let damage = floor $ minimum [fromIntegral $ maxDamage a, (fromIntegral $ maxDamage a) * ratio]
-			
+
 			let d = H.fromAngle (directionToRadians $ direction p)
 			let u = H.Vector 16 0 `H.rotate` d
 			physicsPos <- get $ H.position $ H.body $ shape p
