@@ -250,7 +250,7 @@ selectAnimation p@(Player {
 	sAni = simpleAni anis
 	aAni k d = let AbilityAnimation _ a = (anis ! k) in a ! (doingAbilityState $ fromJust abi) ! d
 
-updateAnimation p = p {animation = first (const $ selectAnimation p) (animation p)}
+updateAnimation ticks p = p {animation = second (const ticks) $ first (const $ selectAnimation p) (animation p)}
 
 deathChance d e
 	| e < 1 = 100
@@ -284,9 +284,9 @@ maybeEliminate player = do
 
 gameLoop win grass gameSpace players projectiles = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
+	ticks <- SDL.getTicks
 	case e of
 		SDL.User SDL.UID0 _ _ _ -> do
-			ticks <- SDL.getTicks
 			projectiles' <- doProjectiles ticks
 			(players', newProjectiles) <- doAbilities players ticks
 			let projectiles'' = projectiles' ++ newProjectiles
@@ -295,38 +295,38 @@ gameLoop win grass gameSpace players projectiles = do
 			next gameSpace' players''' projectiles'''
 
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
-			next gameSpace (handleKeyboard KeyDown keysym) projectiles
+			next gameSpace (handleKeyboard ticks KeyDown keysym) projectiles
 		SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
-			next gameSpace (handleKeyboard KeyUp keysym) projectiles
+			next gameSpace (handleKeyboard ticks KeyUp keysym) projectiles
 
 		SDL.Quit -> return ()
 		_ -> print e >> next gameSpace players projectiles
 	where
 	next = gameLoop win grass
 
-	handleAction (Face d) p = updateAnimation $ p {direction = d}
-	handleAction (Go s) p = updateAnimation $ p {speed = s}
-	handleAction EndAbility p =
-		let time = (\x -> x {ended = Just $ snd $ animation p}) in
+	handleAction ticks (Face d) p = updateAnimation ticks $ p {direction = d}
+	handleAction ticks (Go s) p = updateAnimation ticks $ p {speed = s}
+	handleAction ticks EndAbility p =
+		let time = (\x -> x {ended = Just ticks}) in
 		case ability p of
 			(Just (DoingAbility {ended = Nothing}), _) ->
-				updateAnimation $ p {ability = (first.fmap) time (ability p)}
+				updateAnimation ticks $ p {ability = (first.fmap) time (ability p)}
 			(Just (DoingAbility {ended = Just _}), _) ->
 				p {ability = (second.fmap) time (ability p)}
-	handleAction (Ability s) p =
+	handleAction ticks (Ability s) p =
 		let doing = case animations p ! s of
 			AbilityAnimation abi _ ->
-				Just $ DoingAbility s abi (snd $ animation p) Nothing
+				Just $ DoingAbility s abi ticks Nothing
 			_ -> Nothing
 		in
 		case ability p of
-			(Nothing, Nothing) -> updateAnimation $ p {ability = (doing, Nothing)}
+			(Nothing, Nothing) -> updateAnimation ticks $ p {ability = (doing, Nothing)}
 			(Just a, Nothing) -> p {ability = (Just a, doing)}
 			(Just a, Just b) -> p {ability = (Just a, if isJust doing then doing else Just b)}
 
-	handleKeyboard keystate keysym =
+	handleKeyboard ticks keystate keysym =
 		map (\player ->
-			foldr handleAction player (
+			foldr (handleAction ticks) player (
 				comboKeyboard player keystate $ getKeyAction (controls player) keysym
 			)
 		) players
@@ -408,7 +408,7 @@ gameLoop win grass gameSpace players projectiles = do
 						ended = (\e -> ticks + (e - (started a))) `fmap` ended a
 					}
 				) `fmap` nextAbility
-			return (updateAnimation $ p { ability = (nextAbility', Nothing) }, Just newProjectile)
+			return (updateAnimation ticks $ p { ability = (nextAbility', Nothing) }, Just newProjectile)
 	doAbility _ p = return (p, Nothing)
 	doAbilities players ticks =
 		second catMaybes `fmap` unzip `fmap` mapM (doAbility ticks) players
@@ -506,7 +506,7 @@ newPlayer space sprites anis controls startTicks mass group = do
 	mkConstraint  control body (H.Pivot2 (H.Vector 0 0) (H.Vector 0 0)) 0 10000
 	mkConstraint control body (H.Gear 0 1) 1.2 50000
 
-	let player = updateAnimation $ Player sprites shape control controls (undefined, startTicks) anis (Nothing, Nothing) E 0 50 0 0
+	let player = updateAnimation startTicks $ Player sprites shape control controls (undefined, startTicks) anis (Nothing, Nothing) E 0 50 0 0
 	H.collisionType shape $= collisionType player
 	return player
 	where
