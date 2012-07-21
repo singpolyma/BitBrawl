@@ -521,11 +521,12 @@ newPlayer space sprites anis controls startTicks mass group = do
 forkIO_ :: IO a -> IO ()
 forkIO_ f = (forkIO (f >> return ())) >> return ()
 
-player_parser :: Parser Animations
+player_parser :: Parser (String, Animations)
 player_parser = do
-	takeWhile1 (not.isEndOfLine) -- Ignore name for now
+	name <- takeWhile1 (not.isEndOfLine)
 	endOfLine
-	(fmap Map.fromList $ many animation_set) <* skipSpace <* endOfInput
+	anis <- (fmap Map.fromList $ many animation_set) <* skipSpace <* endOfInput
+	return (T.unpack name, anis)
 	where
 	animation_set = do
 		skipSpace
@@ -594,7 +595,7 @@ startGame win grass controls = do
 			line (0, -windowHeight) (windowWidth, -windowHeight)
 		]
 
-	players <- mapM (\(i,((anis,sprites), c)) ->
+	players <- mapM (\(i,((_,anis,sprites), c)) ->
 			newPlayer gameSpace sprites anis c startTicks 10 i
 		) (zip [1..] (reverse controls))
 
@@ -606,7 +607,7 @@ startGame win grass controls = do
 	pinShape body shape = H.newShape body shape (H.Vector 0 0)
 	line (x1, y1) (x2, y2) = H.LineSegment (H.Vector x1 y1) (H.Vector x2 y2) 0
 
-playerJoinLoop :: SDL.Surface -> SDL.TTF.Font -> SDL.Surface -> [(Animations, SDL.Surface)] -> IO ()
+playerJoinLoop :: SDL.Surface -> SDL.TTF.Font -> SDL.Surface -> [(String, Animations, SDL.Surface)] -> IO ()
 playerJoinLoop win menuFont grass pcs =
 	loop Nothing 0 kActions [(0, KeyboardControl [])]
 	where
@@ -617,7 +618,7 @@ playerJoinLoop win menuFont grass pcs =
 	kActionString (KFace S) = "South (Down)"
 	kActionString KAbility1 = "Ability 1"
 	kActionString KAbility2 = "Ability 2"
-	kActionString KStart = "Start"
+	kActionString KStart = "START"
 	loop keyDown downFor aLeft controls = do
 		e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 		case e of
@@ -651,14 +652,22 @@ playerJoinLoop win menuFont grass pcs =
 		(w, h) <- SDL.TTF.utf8Size menuFont s
 		drawText win (centre w) 10 menuFont s (SDL.Color 0xff 0xff 0xff)
 		return h
+	drawStartMsg = do
+		let s = "When all players have joined, press any START to begin"
+		(w, h) <- SDL.TTF.utf8Size menuFont s
+		drawText win (centre w) (windowHeight-(h*2)) menuFont s (SDL.Color 0xff 0xff 0xff)
 	drawLabelAndPlayers a controls = do
+		drawStartMsg
 		labelH <- drawActionLabel ((length controls)+1) a
 		mapM (\(i,(p,_)) -> do
-				let (anis, sprites) = pcs !! p
+				let (name, anis, sprites) = pcs !! p
 				let x = 10+(i*74)
 				let y = 20+(labelH*2)
 				drawText win x y menuFont ("Player "++show (i+1)) (SDL.Color 0xff 0xff 0xff)
 				SDL.blitSurface sprites (clipAnimation $ simpleAni anis "idle" E) win (jRect x (y+labelH+3) 0 0)
+				(w, h) <- SDL.TTF.utf8Size menuFont name
+				let nx = x + (64 `div` 2) - (w `div` 2)
+				drawText win nx (y+labelH+64+3) menuFont name (SDL.Color 0xff 0xff 0xff)
 			) (zip [0..] (reverse controls))
 		return labelH
 	onTimer (Just keysym) downFor (a:aLeft) ((p,c):controls) = do
@@ -708,9 +717,9 @@ main = withExternalLibs $ do
 	grass <- SDL.load grassPath >>= generateGrass
 
 	pcs <- findDataFiles ((==".player") . takeExtension) >>= mapM (\p -> do
-			Right anis <- fmap (parseOnly player_parser) $ T.readFile p
+			Right (name,anis) <- fmap (parseOnly player_parser) $ T.readFile p
 			sprites <- SDL.load $ replaceExtension p "png"
-			return (anis, sprites)
+			return (name, anis, sprites)
 		)
 
 	playerJoinLoop win menuFont grass pcs
