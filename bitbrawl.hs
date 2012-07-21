@@ -32,7 +32,8 @@ import qualified Physics.Hipmunk as H
 
 type Ticks = Word32
 type Speed = H.CpFloat
-type Animations = Map String (Maybe Ability, Map Direction Animation)
+type DirectedAnimations = Map Direction Animation
+type Animations = Map String AnimationSet
 
 data Direction = E | NE | N | NW | W | SW | S | SE deriving (Show, Read, Enum, Ord, Eq)
 
@@ -43,6 +44,13 @@ data Projectile = Projectile {
 		life   :: Ticks
 	}
 	deriving (Eq)
+
+data AnimationSet =
+	SimpleAnimation DirectedAnimations |
+	AbilityAnimation Ability (Map AbilityState DirectedAnimations)
+	deriving (Show, Read, Eq)
+
+data AbilityState = AbilityCharge | AbilityRelease deriving (Show, Read, Eq, Ord, Enum)
 
 data Ability = Attack {
 		maxDamage  :: Int,
@@ -63,7 +71,8 @@ data DoingAbility = DoingAbility {
 data Animation = Animation {
 		row    :: Int,
 		frames :: Int,
-		frame  :: Int
+		frame  :: Int,
+		col    :: Int
 	}
 	deriving (Show, Read, Eq)
 
@@ -83,7 +92,7 @@ data Player = Player {
 	}
 	deriving (Eq)
 
-data KeyboardAction = KFace Direction | KAbility1 | KStart deriving (Show, Read, Eq)
+data KeyboardAction = KFace Direction | KAbility1 | KAbility2 | KStart deriving (Show, Read, Eq)
 
 data Action = Face Direction | Go Speed | Ability String | EndAbility deriving (Show, Read, Eq)
 
@@ -118,8 +127,6 @@ windowWidth = 800
 
 windowHeight :: (Num a) => a
 windowHeight = 600
-
-a !# b = (snd a) ! b
 
 maybeGetEnv :: String -> IO (Maybe String)
 maybeGetEnv k = do
@@ -172,17 +179,31 @@ splitDirection SE = [S,E]
 timesLoop 0 _ = return ()
 timesLoop n f = f >> (n-1) `timesLoop` f
 
-advanceAnimation :: (Animation,Ticks) -> Ticks -> (Animation,Ticks)
-advanceAnimation (ani, now) ticks
+advanceAnimation :: (Animation,Ticks) -> Ticks -> Ticks -> (Animation,Ticks)
+advanceAnimation (ani, now) frameRate ticks
 	| frames ani < 2 = (ani, ticks)
 	| frame' == (frame ani) = (ani, now)
 	| otherwise = (ani { frame = frame' }, ticks)
 	where
-	frame' = fromIntegral $ (currentFrame + steps) `mod` countFrames
+	frame' = fromIntegral $ (currentFrame + steps)
 	currentFrame = fromIntegral $ frame ani
 	countFrames = fromIntegral $ frames ani
-	steps = time `div` (1000 `div` 10)
+	steps = time `div` (1000 `div` frameRate)
 	time = ticks - now
+
+wrapAnimation :: Animation -> Animation
+wrapAnimation a@(Animation {frame = f, frames = fs, col = c})
+	| f >= maxCol = wrapAnimation $ a {frame = maxCol - f}
+	| otherwise = a
+	where
+	maxCol = c + fs
+
+truncAnimation :: Animation -> Animation
+truncAnimation a@(Animation {frame = f, frames = fs, col = c})
+	| f >= maxCol = a {frame = maxCol - 1}
+	| otherwise = a
+	where
+	maxCol = c + fs
 
 playerPosition :: Player -> IO (Int, Int)
 playerPosition player = do
@@ -211,18 +232,25 @@ generateGrass sprites = do
 	width = 2 * 32
 	rowy = 5 * 32
 
-updateAnimation p@(Player {
+doingAbilityState (DoingAbility {ended = Nothing}) = AbilityCharge
+doingAbilityState (DoingAbility {ended = Just _}) = AbilityRelease
+
+simpleAni anis k d = let SimpleAnimation a = (anis ! k) in a ! d
+
+selectAnimation p@(Player {
 			ability = (abi, _),
 			direction = d,
-			animation = (_, ticks),
 			animations = anis,
 			speed = speed
-		}) =
-	p {animation = (ani', ticks)}
+		})
+	| isJust abi = aAni (abiname (fromJust abi)) d
+	| speed > 0 = sAni "walk" d
+	| otherwise = sAni "idle" d
 	where
-	ani' | isJust abi = anis ! abiname (fromJust abi) !# d
-	     | speed > 0 = anis ! "walk" !# d
-	     | otherwise = anis ! "idle" !# d
+	sAni = simpleAni anis
+	aAni k d = let AbilityAnimation _ a = (anis ! k) in a ! (doingAbilityState $ fromJust abi) ! d
+
+updateAnimation p = p {animation = first (const $ selectAnimation p) (animation p)}
 
 deathChance d e
 	| e < 1 = 100
@@ -242,7 +270,6 @@ deathChance d e
 
 maybeEliminate player = do
 	x <- getStdRandom (randomR (0,99))
-	print (damageAmt player, energy player, chance, x)
 	-- When x < change, player in eliminated, respawn
 	if (x < chance) then do
 			x <- getStdRandom (randomR (32,windowWidth-32))
@@ -283,13 +310,14 @@ gameLoop win grass gameSpace players projectiles = do
 		let time = (\x -> x {ended = Just $ snd $ animation p}) in
 		case ability p of
 			(Just (DoingAbility {ended = Nothing}), _) ->
-				p {ability = (first.fmap) time (ability p)}
+				updateAnimation $ p {ability = (first.fmap) time (ability p)}
 			(Just (DoingAbility {ended = Just _}), _) ->
 				p {ability = (second.fmap) time (ability p)}
 	handleAction (Ability s) p =
-		let doing = do
-			abi <- fst $ (animations p) ! s
-			return $ DoingAbility s abi (snd $ animation p) Nothing
+		let doing = case animations p ! s of
+			AbilityAnimation abi _ ->
+				Just $ DoingAbility s abi (snd $ animation p) Nothing
+			_ -> Nothing
 		in
 		case ability p of
 			(Nothing, Nothing) -> updateAnimation $ p {ability = (doing, Nothing)}
@@ -310,7 +338,9 @@ gameLoop win grass gameSpace players projectiles = do
 		| null (unsetOneAxis (direction player) d) = [Go 0]
 		| otherwise = [Face $ head $ unsetOneAxis (direction player) d]
 	comboKeyboard player KeyDown (Just KAbility1) = [Ability "ability1"]
+	comboKeyboard player KeyDown (Just KAbility2) = [Ability "ability2"]
 	comboKeyboard player KeyUp (Just KAbility1) = [EndAbility]
+	comboKeyboard player KeyUp (Just KAbility2) = [EndAbility]
 	comboKeyboard _ _ _ = []
 
 	setOneAxis d E
@@ -425,9 +455,18 @@ gameLoop win grass gameSpace players projectiles = do
 		projectiles' <- fmap catMaybes $ mapM get mutableProjectiles
 
 		return $ (Space hSpace ticks (time `mod` frameTime), players', projectiles')
+	playerAniRate (Player {ability = (Nothing, _)}) = 10
+	playerAniRate (Player {ability = (Just (DoingAbility {ended = Nothing, dability = Attack {chargeLen = t}}), _), animation = (Animation {frames = fs}, _)}) = case t `div` (fromIntegral fs) of
+		0 -> 1
+		r -> 1000 `div` r
+	playerAniRate (Player {ability = (Just (DoingAbility {ended = (Just _), dability = Attack {releaseLen = t}}), _), animation = (Animation {frames = fs}, _)}) = case t `div` (fromIntegral fs) of
+		0 -> 1
+		r -> 1000 `div` r
+	playerWrapAni p@(Player {ability = (Nothing, _)}) = p {animation = first wrapAnimation (animation p)}
+	playerWrapAni p@(Player {ability = (Just _, _)}) = p {animation = first truncAnimation (animation p)}
 	advancePlayerAnimation player ticks =
-		let (ani,aniTicks) = advanceAnimation (animation player) ticks in
-		player {animation = (ani, aniTicks)}
+		let (ani,aniTicks) = advanceAnimation (animation player) (playerAniRate player) ticks in
+		playerWrapAni $ player {animation = (ani, aniTicks)}
 	drawPlayer player (x,y) = do
 		let box = jRect x y 64 64
 		SDL.blitSurface (sprites player) (clipAnimation $ fst $ animation player) win box
@@ -467,7 +506,7 @@ newPlayer space sprites anis controls startTicks mass group = do
 	mkConstraint  control body (H.Pivot2 (H.Vector 0 0) (H.Vector 0 0)) 0 10000
 	mkConstraint control body (H.Gear 0 1) 1.2 50000
 
-	let player = Player sprites shape control controls (anis ! "idle" !# E, startTicks) anis (Nothing, Nothing) E 0 50 0 0
+	let player = updateAnimation $ Player sprites shape control controls (undefined, startTicks) anis (Nothing, Nothing) E 0 50 0 0
 	H.collisionType shape $= collisionType player
 	return player
 	where
@@ -491,28 +530,54 @@ player_parser = do
 	animation_set = do
 		skipSpace
 		key <- takeWhile1 (\x -> not $ x == '{' || isSpace x)
-		skipSpace
-		char '{'
-		skipSpace
-		abi <- option Nothing (fmap Just ability)
-		ani <- many (skipSpace >> directed_animation)
-		skipSpace
-		char '}'
-		return $ (T.unpack key, (abi, Map.fromList ani))
+		aniSet <- braces (do
+			abi <- option Nothing (fmap Just ability)
+			case abi of
+				Nothing -> fmap SimpleAnimation directed_animations
+				Just a -> skipSpace >> sub_attacks a
+			)
+		return $ (T.unpack key, aniSet)
 	ability = do
 		string $ T.pack "attack"
 		maxDamage <- ws_int
-		chargeLen <- fmap fromIntegral ws_int
-		releaseLen <- fmap fromIntegral ws_int
-		duration <- fmap fromIntegral ws_int
-		return (Attack maxDamage chargeLen releaseLen duration)
+		return (Attack maxDamage)
+	sub_attacks a = do
+		((c,ca),(r,ra)) <- (charge `andThen` release) <|> (fmap swap $ release `andThen` charge)
+		return $ AbilityAnimation (a c r 0) (Map.fromList [ca,ra])
+	charge = do
+		string $ T.pack "charge"
+		duration <- ws_int
+		anis <- braces $ directed_animations
+		return (duration, (AbilityCharge, anis))
+	release = do
+		string $ T.pack "release"
+		duration <- ws_int
+		anis <- braces $ directed_animations
+		return (duration, (AbilityRelease, anis))
+	directed_animations = fmap Map.fromList $ many (skipSpace >> directed_animation)
 	directed_animation = do
 		direction <- readOne ["NE", "NW", "SE", "SW", "E", "N", "W", "S"]
-		ani <- liftM3 Animation ws_int ws_int ws_int
+		ani <- liftM2 Animation ws_int ws_int
+		col <- ws_int
 		skipWhile (\x -> isSpace x && not (isEndOfLine x)) *> endOfLine
-		return (direction, ani)
+		return (direction, ani col col)
+	braces f = do
+		skipSpace
+		char '{'
+		skipSpace
+		v <- f
+		skipSpace
+		char '}'
+		skipSpace
+		return v
 	readOne = fmap (read . T.unpack) . choice . map (string . T.pack)
+	andThen a b = do
+		v1 <- a
+		v2 <- b
+		return (v1, v2)
+	ws_int :: (Integral a) => Parser a
 	ws_int = skipSpace *> decimal
+	swap (a,b) = (b,a)
 
 sdlKeyName = drop 5 . show
 
@@ -545,12 +610,13 @@ playerJoinLoop :: SDL.Surface -> SDL.TTF.Font -> SDL.Surface -> [(Animations, SD
 playerJoinLoop win menuFont grass pcs =
 	loop Nothing 0 kActions [(0, KeyboardControl [])]
 	where
-	kActions = [KFace E, KFace N, KFace W, KFace S, KAbility1, KStart]
+	kActions = [KFace E, KFace N, KFace W, KFace S, KAbility1, KAbility2, KStart]
 	kActionString (KFace E) = "East (Right)"
 	kActionString (KFace N) = "North (Up)"
 	kActionString (KFace W) = "West (Left)"
 	kActionString (KFace S) = "South (Down)"
 	kActionString KAbility1 = "Ability 1"
+	kActionString KAbility2 = "Ability 2"
 	kActionString KStart = "Start"
 	loop keyDown downFor aLeft controls = do
 		e <- SDL.waitEvent -- Have to use the expensive wait so timer works
@@ -592,7 +658,7 @@ playerJoinLoop win menuFont grass pcs =
 				let x = 10+(i*74)
 				let y = 20+(labelH*2)
 				drawText win x y menuFont ("Player "++show (i+1)) (SDL.Color 0xff 0xff 0xff)
-				SDL.blitSurface sprites (clipAnimation $ anis ! "idle" !# E) win (jRect x (y+labelH+3) 0 0)
+				SDL.blitSurface sprites (clipAnimation $ simpleAni anis "idle" E) win (jRect x (y+labelH+3) 0 0)
 			) (zip [0..] (reverse controls))
 		return labelH
 	onTimer (Just keysym) downFor (a:aLeft) ((p,c):controls) = do
@@ -630,7 +696,6 @@ withExternalLibs f = SDL.withInit [SDL.InitEverything] $ do
 
 	SDL.TTF.quit
 	SDL.quit
-
 
 main = withExternalLibs $ do
 	forkIO_ $ timer frameTime (SDL.tryPushEvent $ SDL.User SDL.UID0 0 nullPtr nullPtr)
