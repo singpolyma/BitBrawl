@@ -640,7 +640,7 @@ playerJoinLoop win menuFont grass pcs =
 				loop (if (Just keysym) == keyDown then Nothing else keyDown) 0 aLeft controls
 			SDL.Quit -> return ()
 			_ -> print e >> loop keyDown downFor aLeft controls
-	barWidth downFor = minimum [windowWidth-20, ((windowWidth-20) * downFor) `div` 20]
+	barWidth downFor = minimum [windowWidth-20, ((windowWidth-20) * downFor) `div` 10]
 	addBinding b (KeyboardControl c) = KeyboardControl (b:c)
 	drawText surface x y font string color = do
 		rendered <- SDL.TTF.renderUTF8Blended font string color
@@ -673,7 +673,7 @@ playerJoinLoop win menuFont grass pcs =
 
 		SDL.flip win
 
-		if downFor > 20 then
+		if downFor > 10 then
 				let cs = (p,addBinding (keysym, a) c):controls in
 				if null aLeft then
 					loop Nothing 0 kActions ((0, KeyboardControl []):cs)
