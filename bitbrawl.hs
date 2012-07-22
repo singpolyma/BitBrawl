@@ -38,10 +38,12 @@ type Animations = Map String AnimationSet
 data Direction = E | NE | N | NW | W | SW | S | SE deriving (Show, Read, Enum, Ord, Eq)
 
 data Projectile = Projectile {
-		pani   :: (Maybe Animation),
-		damage :: Int,
-		pshape :: H.Shape,
-		life   :: Ticks
+		pani     :: Maybe (Animation, Ticks, Ticks),
+		damage   :: Int,
+		pshape   :: H.Shape,
+		life     :: Ticks,
+		pplayer  :: Player,
+		deathPos :: Maybe (H.Vector, H.Vector)
 	}
 	deriving (Eq)
 
@@ -53,10 +55,11 @@ data AnimationSet =
 data AbilityState = AbilityCharge | AbilityRelease deriving (Show, Read, Eq, Ord, Enum)
 
 data Ability = Attack {
-		maxDamage  :: Int,
-		chargeLen  :: Ticks,
-		releaseLen :: Ticks,
-		duration   :: Ticks
+		maxDamage      :: Int,
+		chargeLen      :: Ticks,
+		releaseLen     :: Ticks,
+		duration       :: Ticks,
+		projectileAnis :: Maybe (DirectedAnimations, Ticks)
 	}
 	deriving (Show, Read, Eq)
 
@@ -210,6 +213,22 @@ playerPosition player = do
 	(H.Vector x' y') <- get $ H.position $ H.body $ shape player
 	return (floor x' - 32, (-1 * floor y') - 64)
 
+projectilePosition :: Projectile -> IO (Int, Int)
+projectilePosition projectile = do
+	(H.Vector x' y') <- get $ H.position $ H.body $ pshape projectile
+	(H.Vector vx vy) <- get $ H.velocity $ H.body $ pshape projectile
+	let x = if vx > 1 then
+			x' - 64
+		else if vy < -1 || vy > 1 then
+			x' - 32
+		else
+			x'
+	let y = if vy < -1 then
+			y' + (64*2)
+		else
+			y'
+	return (floor x, floor $ (-1 * y') - 64)
+
 directionToRadians :: Direction -> H.Angle
 directionToRadians d = (factor * pi) / 4
 	where
@@ -291,8 +310,8 @@ gameLoop win grass gameSpace players projectiles = do
 			(players', newProjectiles) <- doAbilities players ticks
 			let projectiles'' = projectiles' ++ newProjectiles
 			(gameSpace', players'', projectiles''') <- doPhysics ticks projectiles'' players'
-			players''' <- doDrawing ticks players''
-			next gameSpace' players''' projectiles'''
+			(players''', projectiles'''') <- doDrawing ticks players'' projectiles'''
+			next gameSpace' players''' projectiles''''
 
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
 			next gameSpace (handleKeyboard ticks KeyDown keysym) projectiles
@@ -373,11 +392,14 @@ gameLoop win grass gameSpace players projectiles = do
 		let d = H.fromAngle (directionToRadians $ direction player)
 		H.velocity (control player) $= (H.Vector (speed player) 0 `H.rotate` d)
 	doProjectiles ticks =
-		let (Space s _ _) = gameSpace in
-		filterM (\p -> do
+		mapM (\p -> do
 			let dead = ticks > life p 
-			when dead $ H.spaceRemove s (pshape p)
-			return $ not dead
+			if dead && isNothing (deathPos p) then do
+					pos <- get $ H.position $ H.body $ pshape p
+					vel <- get $ H.velocity $ H.body $ pshape p
+					return $ p {deathPos = Just (pos,vel)}
+				else
+					return p
 		) projectiles
 	doAbility ticks p@(Player {ability = (Just (DoingAbility _ a s (Just e)), nextAbility)})
 		| ((toInteger ticks) - (toInteger e)) >= toInteger (releaseLen a) = do
@@ -391,9 +413,10 @@ gameLoop win grass gameSpace players projectiles = do
 
 			body <- H.newBody H.infinity H.infinity
 			shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
-			let newProjectile = Projectile Nothing damage shp (duration a + ticks)
+			let newProjectile = Projectile (fmap (\(as,r) -> (as!(direction p),r,ticks)) (projectileAnis a)) damage shp (duration a + ticks) p Nothing
 
 			H.position body $= physicsPos + u
+			H.velocity body $= H.scale u 4
 
 			(($=) (H.group shp)) =<< get (H.group $ shape p)
 			H.collisionType shp $= collisionType newProjectile
@@ -417,7 +440,7 @@ gameLoop win grass gameSpace players projectiles = do
 		let (Space hSpace spaceTicks dtRemainder) = gameSpace
 
 		mutablePlayers <- mapM newIORef players
-		mutableProjectiles <- mapM (newIORef . Just) projectiles
+		mutableProjectiles <- mapM newIORef projectiles
 
 		-- Reset collision handler every time so the right stuff is in scope
 		H.addCollisionHandler hSpace (collisionType $ head players) (collisionType $ head projectiles) (H.Handler
@@ -427,19 +450,20 @@ gameLoop win grass gameSpace players projectiles = do
 					liftIO (do
 						let get' = (\f x -> fmap f (get x))
 						[pl] <- filterM (get' ((==plshp) . shape)) mutablePlayers
-						pr <- filterM (get' (\x -> fromMaybe False $ fmap ((==prshp) . pshape) x)) mutableProjectiles
+						pr <- filterM (get' ((==prshp) . pshape)) =<< filterM (get' (isNothing . deathPos)) mutableProjectiles
 						case pr of
 							[pr] -> do
 								-- Projectile has hit so player is damaged
-								projectile <- fmap fromJust $ get pr
+								projectile <- get pr
 								pl $~ (\player -> player {damageAmt = (damageAmt player) + (damage projectile)})
 								get pl >>= maybeEliminate >>= (($=) pl)
 
 								-- Projectile has hit, so it is gone
-								liftIO (pr $= Nothing)
+								pos <- get $ H.position $ H.body $ pshape projectile
+								vel <- get $ H.velocity $ H.body $ pshape projectile
+								pr $= projectile {deathPos = Just (pos,vel)}
 							_ -> return ()
 						)
-					H.postStep prshp (H.currentSpaceRemove prshp)
 
 					return False -- Do not run collision physics
 				))
@@ -452,7 +476,7 @@ gameLoop win grass gameSpace players projectiles = do
 		(time `div` frameTime) `timesLoop` (H.step hSpace (frameTime/1000))
 
 		players' <- mapM get mutablePlayers
-		projectiles' <- fmap catMaybes $ mapM get mutableProjectiles
+		projectiles' <- mapM get mutableProjectiles
 
 		return $ (Space hSpace ticks (time `mod` frameTime), players', projectiles')
 	playerAniRate (Player {ability = (Nothing, _)}) = 10
@@ -467,23 +491,50 @@ gameLoop win grass gameSpace players projectiles = do
 	advancePlayerAnimation player ticks =
 		let (ani,aniTicks) = advanceAnimation (animation player) (playerAniRate player) ticks in
 		playerWrapAni $ player {animation = (ani, aniTicks)}
-	drawPlayer player (x,y) = do
+	advanceProjectileAnimation projectile@(Projectile {pani = Just (a,rate,aniTicks)}) ticks =
+		let (ani,aniTicks') = advanceAnimation (a,aniTicks) rate ticks
+		    p = projectile {pani = Just (wrapAnimation ani, rate, aniTicks')} in
+		if frame ani >= frames ani && isJust (deathPos p) then
+			p {pani = Nothing} -- shape is gone, animation is done
+		else
+			p
+	advanceProjectileAnimation projectile _ = projectile
+	drawAnimation sprites animation (x,y) = do
 		let box = jRect x y 64 64
-		SDL.blitSurface (sprites player) (clipAnimation $ fst $ animation player) win box
+		SDL.blitSurface sprites (clipAnimation animation) win box
+		return ()
+	drawPlayer player (x,y) = do
+		drawAnimation (sprites player) (fst $ animation player) (x,y)
 
 		red <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0xff 0 0
 		let damageBar = ((64-32) * (damageAmt player)) `div` 100
 		SDL.fillRect win (jRect (x+16) (y-7) damageBar 5) red
-	doDrawing ticks players = do
+	drawProjectile (Projectile {pplayer = p, pani = Just (ani,_,_)}) (x,y) = do
+		drawAnimation (sprites p) ani (x,y)
+	drawProjectile _ _ = return ()
+	doDrawing ticks players projectiles = do
 		let players' = map (`advancePlayerAnimation` ticks) players
+		let projectiles' = map (`advanceProjectileAnimation` ticks) projectiles
 		-- We don't know where the players were before. Erase whole screen
 		SDL.blitSurface grass Nothing win (jRect 0 0 0 0)
 
 		playerPositions <- mapM playerPosition players'
-		mapM (uncurry drawPlayer) (sortBy (comparing (snd.snd)) (zip players' playerPositions))
+		mapM_ (uncurry drawPlayer) (sortBy (comparing (snd.snd)) (zip players' playerPositions))
+
+		projectilePositions <- mapM projectilePosition projectiles'
+		mapM_ (uncurry drawProjectile) (sortBy (comparing (snd.snd)) (zip projectiles' projectilePositions))
+
+		let (projectiles'', deadProjectiles) = partition (\proj ->
+				not (isJust (deathPos proj) && isNothing (pani proj))
+			) projectiles'
+
+		mapM_ (\p -> do
+				let (Space s _ _) = gameSpace
+				H.spaceRemove s (pshape p)
+			) deadProjectiles
 
 		SDL.flip win
-		return players'
+		return (players', projectiles'')
 
 newPlayer :: H.Space -> SDL.Surface -> Animations -> Control -> Ticks -> H.CpFloat -> H.Group -> IO Player
 newPlayer space sprites anis controls startTicks mass group = do
@@ -543,18 +594,41 @@ player_parser = do
 		maxDamage <- ws_int
 		return (Attack maxDamage)
 	sub_attacks a = do
-		((c,ca),(r,ra)) <- (charge `andThen` release) <|> (fmap swap $ release `andThen` charge)
-		return $ AbilityAnimation (a c r 0) (Map.fromList [ca,ra])
-	charge = do
-		string $ T.pack "charge"
+		(d1, a1) <- one_sub_attack
+		(d2, a2) <- one_sub_attack
+		case (a1, a2) of
+			(Left a1, Left a2) -> do
+				let a' = apply_c_r a d1 d2
+				proj <- option Nothing (fmap Just projectile)
+				return $ case proj of
+					Nothing -> AbilityAnimation (a' 0 Nothing) (Map.fromList [a1,a2])
+					Just (d,r,a) -> AbilityAnimation (a' d (Just (a,r))) (Map.fromList [a1,a2])
+			(Left _, Right _) -> sub_attack_partial a (d1, a1) (d2, a2)
+			(Right _, Left _) -> sub_attack_partial a (d2, a2) (d1, a1)
+			_ -> fail "Not allowed to have more than one projectile spec."
+	sub_attack_partial a (d1,Left a1) ((2,dP),Right (rP,aP)) = do
+		(d3, Left a3) <- one_sub_attack
+		let a' = apply_c_r a d1 d3
+		return $ AbilityAnimation (a' dP (Just (aP,rP))) (Map.fromList [a1,a3])
+	apply_c_r a d1 d2 = let [(_,c),(_,r)] = sortBy (comparing fst) [d1,d2] in a c r
+	one_sub_attack = do
+		let charge = sub_attack "charge" AbilityCharge
+		let release = sub_attack "release" AbilityRelease
+		v <- (charge <|> release) `eitherP` projectile
+		case v of
+			Left (d, (s,a)) -> return ((fromEnum s,d), Left (s,a))
+			Right (d, r, a) -> return ((2,d), Right (r,a))
+	projectile = do
+		string $ T.pack "projectile"
+		duration <- ws_int
+		rate <- ws_int
+		anis <- braces $ directed_animations
+		return (duration, rate, anis)
+	sub_attack s state = do
+		string $ T.pack s
 		duration <- ws_int
 		anis <- braces $ directed_animations
-		return (duration, (AbilityCharge, anis))
-	release = do
-		string $ T.pack "release"
-		duration <- ws_int
-		anis <- braces $ directed_animations
-		return (duration, (AbilityRelease, anis))
+		return (duration, (state, anis))
 	directed_animations = fmap Map.fromList $ many (skipSpace >> directed_animation)
 	directed_animation = do
 		direction <- readOne ["NE", "NW", "SE", "SW", "E", "N", "W", "S"]
@@ -572,10 +646,6 @@ player_parser = do
 		skipSpace
 		return v
 	readOne = fmap (read . T.unpack) . choice . map (string . T.pack)
-	andThen a b = do
-		v1 <- a
-		v2 <- b
-		return (v1, v2)
 	ws_int :: (Integral a) => Parser a
 	ws_int = skipSpace *> decimal
 	swap (a,b) = (b,a)
