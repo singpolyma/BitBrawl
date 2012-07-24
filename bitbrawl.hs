@@ -215,8 +215,8 @@ playerPosition player = do
 
 projectilePosition :: Projectile -> IO (Int, Int)
 projectilePosition projectile = do
-	(H.Vector x' y') <- get $ H.position $ H.body $ pshape projectile
-	(H.Vector vx vy) <- get $ H.velocity $ H.body $ pshape projectile
+	(x', y') <- floorVector `fmap` (get $ H.position $ H.body $ pshape projectile)
+	(vx, vy) <- floorVector `fmap` (get $ H.velocity $ H.body $ pshape projectile)
 	let x = if vx > 1 then
 			x' - 64
 		else if vy < -1 || vy > 1 then
@@ -227,7 +227,10 @@ projectilePosition projectile = do
 			y' + (64*2)
 		else
 			y'
-	return (floor x, floor $ (-1 * y') - 64)
+	return (x, (-1 * y') - 64)
+
+floorVector :: H.Vector -> (Int, Int)
+floorVector (H.Vector x y) = (floor x, floor y)
 
 directionToRadians :: Direction -> H.Angle
 directionToRadians d = (factor * pi) / 4
