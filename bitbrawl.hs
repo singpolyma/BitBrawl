@@ -123,7 +123,7 @@ frameTime :: (Num a) => a
 frameTime = fromIntegral (1000 `div` frameRate)
 
 playerSpeed :: (Num a) => a
-playerSpeed = 60
+playerSpeed = 75
 
 windowWidth :: (Num a) => a
 windowWidth = 800
