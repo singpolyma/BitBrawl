@@ -26,8 +26,21 @@ idle {
 	SW 10 1 0
 }
 
+fall {
+	E  20 6 0
+	W  20 6 0
+
+	N  20 6 0
+	NE 20 6 0
+	NW 20 6 0
+
+	S  20 6 0
+	SE 20 6 0
+	SW 20 6 0
+}
+
 ability1 {
-	attack 2
+	attack 2 0
 
 	charge 1 {
 		E  15 1 0
@@ -57,7 +70,7 @@ ability1 {
 }
 
 ability2 {
-	attack 10
+	attack 10 200
 
 	charge 1000 {
 		E   7 4 0

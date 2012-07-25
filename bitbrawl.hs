@@ -38,30 +38,39 @@ type Animations = Map String AnimationSet
 data Direction = E | NE | N | NW | W | SW | S | SE deriving (Show, Read, Enum, Ord, Eq)
 
 data Projectile = Projectile {
-		pani     :: Maybe (Animation, Ticks, Ticks),
-		damage   :: Int,
-		pshape   :: H.Shape,
-		life     :: Ticks,
-		pplayer  :: Player,
-		deathPos :: Maybe (H.Vector, H.Vector)
+		pani      :: Maybe (Animation, Ticks, Ticks),
+		damage    :: Int,
+		knockback :: Int,
+		pshape    :: H.Shape,
+		life      :: Ticks,
+		pplayer   :: Player,
+		deathPos  :: Maybe (H.Vector, H.Vector)
 	}
 	deriving (Eq)
 
 data AnimationSet =
 	SimpleAnimation DirectedAnimations |
 	AbilityAnimation Ability (Map AbilityState DirectedAnimations)
-	deriving (Show, Read, Eq)
+	deriving (Show, Eq)
 
 data AbilityState = AbilityCharge | AbilityRelease deriving (Show, Read, Eq, Ord, Enum)
 
 data Ability = Attack {
 		maxDamage      :: Int,
+		maxKnockback   :: Int,
 		chargeLen      :: Ticks,
 		releaseLen     :: Ticks,
-		duration       :: Ticks,
+		maxDuration    :: Ticks,
 		projectileAnis :: Maybe (DirectedAnimations, Ticks)
+	} |
+	Block {
+		chargeLen       :: Ticks,
+		releaseLen      :: Ticks,
+		maxDuration     :: Ticks,
+		velocity        :: H.Vector,
+		projectileAnis  :: Maybe (DirectedAnimations, Ticks)
 	}
-	deriving (Show, Read, Eq)
+	deriving (Show, Eq)
 
 data DoingAbility = DoingAbility {
 		abiname  :: String,
@@ -69,7 +78,7 @@ data DoingAbility = DoingAbility {
 		started  :: Ticks,
 		ended    :: Maybe Ticks
 	}
-	deriving (Show, Read, Eq)
+	deriving (Show, Eq)
 
 data Animation = Animation {
 		row    :: Int,
@@ -208,6 +217,8 @@ truncAnimation a@(Animation {frame = f, frames = fs, col = c})
 	where
 	maxCol = c + fs
 
+knockedBack now v = DoingAbility "fall" (Block 1 400 0 v Nothing) now (Just now)
+
 playerPosition :: Player -> IO (Int, Int)
 playerPosition player = do
 	(H.Vector x' y') <- get $ H.position $ H.body $ shape player
@@ -265,10 +276,13 @@ selectAnimation p@(Player {
 			animations = anis,
 			speed = speed
 		})
-	| isJust abi = aAni (abiname (fromJust abi)) d
+	| isJust abi = someAni (abiname (fromJust abi)) d
 	| speed > 0 = sAni "walk" d
 	| otherwise = sAni "idle" d
 	where
+	someAni k d = case anis ! k of
+		SimpleAnimation {} -> sAni k d
+		AbilityAnimation {} -> aAni k d
 	sAni = simpleAni anis
 	aAni k d = let AbilityAnimation _ a = (anis ! k) in a ! (doingAbilityState $ fromJust abi) ! d
 
@@ -297,9 +311,9 @@ maybeEliminate player = do
 			x <- getStdRandom (randomR (32,windowWidth-32))
 			y <- getStdRandom (randomR (-64,-windowHeight))
 			(H.position $ H.body $ shape player) $= H.Vector x y
-			return $ player {damageAmt = 0, energy = 50, deaths = (deaths player) + 1}
+			return (True, player {damageAmt = 0, energy = 50, deaths = (deaths player) + 1})
 		else
-			return player
+			return (False, player)
 	where
 	chance = deathChance (damageAmt player) (energy player)
 
@@ -331,6 +345,7 @@ gameLoop win grass gameSpace players projectiles = do
 	handleAction ticks EndAbility p =
 		let time = (\x -> x {ended = Just ticks}) in
 		case ability p of
+			(Nothing, _) -> p -- No change, this can happen if action is cancelled
 			(Just (DoingAbility {ended = Nothing}), _) ->
 				updateAnimation ticks $ p {ability = (first.fmap) time (ability p)}
 			(Just (DoingAbility {ended = Just _}), _) ->
@@ -393,7 +408,9 @@ gameLoop win grass gameSpace players projectiles = do
 
 	setPlayerVelocity player = do
 		let d = H.fromAngle (directionToRadians $ direction player)
-		H.velocity (control player) $= (H.Vector (speed player) 0 `H.rotate` d)
+		H.velocity (control player) $= case ability player of
+			(Just (DoingAbility {dability = Block {velocity = v}}), _) -> v
+			_ -> H.Vector (speed player) 0 `H.rotate` d
 	doProjectiles ticks =
 		mapM (\p -> do
 			let dead = ticks > life p 
@@ -408,25 +425,7 @@ gameLoop win grass gameSpace players projectiles = do
 		| ((toInteger ticks) - (toInteger e)) >= toInteger (releaseLen a) = do
 			let len = fromIntegral $ (toInteger e) - (toInteger s)
 			let ratio = (if len < 1 then 1 else len) / (fromIntegral $ chargeLen a)
-			let damage = floor $ minimum [fromIntegral $ maxDamage a, (fromIntegral $ maxDamage a) * ratio]
-
-			let d = H.fromAngle (directionToRadians $ direction p)
-			let u = H.Vector 16 0 `H.rotate` d
-			physicsPos <- get $ H.position $ H.body $ shape p
-
-			body <- H.newBody H.infinity H.infinity
-			shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
-			let newProjectile = Projectile (fmap (\(as,r) -> (as!(direction p),r,ticks)) (projectileAnis a)) damage shp (duration a + ticks) p Nothing
-
-			H.position body $= physicsPos + u
-			H.velocity body $= H.scale u 4
-
-			(($=) (H.group shp)) =<< get (H.group $ shape p)
-			H.collisionType shp $= collisionType newProjectile
-
-			let (Space s _ _) = gameSpace
-			H.spaceAdd s body
-			H.spaceAdd s shp
+			let duration = floor $ minimum [fromIntegral $ maxDuration a, (fromIntegral $ maxDuration a) * ratio]
 
 			let nextAbility' = (\a ->
 					a {
@@ -434,7 +433,33 @@ gameLoop win grass gameSpace players projectiles = do
 						ended = (\e -> ticks + (e - (started a))) `fmap` ended a
 					}
 				) `fmap` nextAbility
-			return (updateAnimation ticks $ p { ability = (nextAbility', Nothing) }, Just newProjectile)
+
+			case a of
+				(Attack {}) -> do
+					let damage = floor $ minimum [fromIntegral $ maxDamage a, (fromIntegral $ maxDamage a) * ratio]
+					let knock  = floor $ minimum [fromIntegral $ maxKnockback a, (fromIntegral $ maxKnockback a) * ratio]
+
+					let d = H.fromAngle (directionToRadians $ direction p)
+					let u = H.Vector 16 0 `H.rotate` d
+					physicsPos <- get $ H.position $ H.body $ shape p
+
+					body <- H.newBody H.infinity H.infinity
+					shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
+					let newProjectile = Projectile (fmap (\(as,r) -> (as!(direction p),r,ticks)) (projectileAnis a)) damage knock shp (duration + ticks) p Nothing
+
+					H.position body $= physicsPos + u
+					H.velocity body $= H.scale u 4
+
+					(($=) (H.group shp)) =<< get (H.group $ shape p)
+					H.collisionType shp $= collisionType newProjectile
+
+					let (Space s _ _) = gameSpace
+					H.spaceAdd s body
+					H.spaceAdd s shp
+
+					return (updateAnimation ticks $ p { ability = (nextAbility', Nothing) }, Just newProjectile)
+				_ ->
+					return (updateAnimation ticks $ p { ability = (nextAbility', Nothing) }, Nothing)
 	doAbility _ p = return (p, Nothing)
 	doAbilities players ticks =
 		second catMaybes `fmap` unzip `fmap` mapM (doAbility ticks) players
@@ -459,7 +484,16 @@ gameLoop win grass gameSpace players projectiles = do
 								-- Projectile has hit so player is damaged
 								projectile <- get pr
 								pl $~ (\player -> player {damageAmt = (damageAmt player) + (damage projectile)})
-								get pl >>= maybeEliminate >>= (($=) pl)
+								(elim, player) <- maybeEliminate =<< get pl
+								if elim then
+										pl $= player
+									else do
+										v <- get $ H.velocity $ H.body $ pshape projectile
+										case fromIntegral $ knockback projectile of
+											0     ->
+												pl $= (updateAnimation ticks $ player { speed = 0, ability = (Nothing, Nothing) })
+											knock ->
+												pl $= (updateAnimation ticks $ player { speed = 0, ability = (Just $ knockedBack ticks (H.scale (H.normalize v) knock), Nothing) })
 
 								-- Projectile has hit, so it is gone
 								pos <- get $ H.position $ H.body $ pshape projectile
@@ -483,10 +517,10 @@ gameLoop win grass gameSpace players projectiles = do
 
 		return $ (Space hSpace ticks (time `mod` frameTime), players', projectiles')
 	playerAniRate (Player {ability = (Nothing, _)}) = 10
-	playerAniRate (Player {ability = (Just (DoingAbility {ended = Nothing, dability = Attack {chargeLen = t}}), _), animation = (Animation {frames = fs}, _)}) = case t `div` (fromIntegral fs) of
+	playerAniRate (Player {ability = (Just (DoingAbility {ended = Nothing, dability = abi}), _), animation = (Animation {frames = fs}, _)}) = case (chargeLen abi) `div` (fromIntegral fs) of
 		0 -> 1
 		r -> 1000 `div` r
-	playerAniRate (Player {ability = (Just (DoingAbility {ended = (Just _), dability = Attack {releaseLen = t}}), _), animation = (Animation {frames = fs}, _)}) = case t `div` (fromIntegral fs) of
+	playerAniRate (Player {ability = (Just (DoingAbility {ended = (Just _), dability = abi}), _), animation = (Animation {frames = fs}, _)}) = case (releaseLen abi) `div` (fromIntegral fs) of
 		0 -> 1
 		r -> 1000 `div` r
 	playerWrapAni p@(Player {ability = (Nothing, _)}) = p {animation = first wrapAnimation (animation p)}
@@ -595,7 +629,8 @@ player_parser = do
 	ability = do
 		string $ T.pack "attack"
 		maxDamage <- ws_int
-		return (Attack maxDamage)
+		maxKnockback <- ws_int
+		return (Attack maxDamage maxKnockback)
 	sub_attacks a = do
 		(d1, a1) <- one_sub_attack
 		(d2, a2) <- one_sub_attack
