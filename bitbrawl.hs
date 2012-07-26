@@ -65,17 +65,19 @@ data AbilityState = AbilityCharge | AbilityRelease deriving (Show, Read, Eq, Ord
 data Ability = Attack {
 		maxDamage      :: Int,
 		maxKnockback   :: Int,
+		energyCost     :: Int,
 		chargeLen      :: Ticks,
 		releaseLen     :: Ticks,
 		maxDuration    :: Ticks,
 		projectileAnis :: Maybe (DirectedAnimations, Ticks)
 	} |
 	Block {
-		chargeLen       :: Ticks,
-		releaseLen      :: Ticks,
-		maxDuration     :: Ticks,
-		velocity        :: H.Vector,
-		projectileAnis  :: Maybe (DirectedAnimations, Ticks)
+		energyCost     :: Int,
+		chargeLen      :: Ticks,
+		releaseLen     :: Ticks,
+		maxDuration    :: Ticks,
+		velocity       :: H.Vector,
+		projectileAnis :: Maybe (DirectedAnimations, Ticks)
 	}
 	deriving (Show, Eq)
 
@@ -322,7 +324,7 @@ drawAnimation win sprites animation (x,y) = do
 	SDL.blitSurface sprites (clipAnimation animation) win box
 	return ()
 
-knockedBack now v = DoingAbility "fall" (Block 1 400 0 v Nothing) now (Just now)
+knockedBack now v = DoingAbility "fall" (Block 0 1 400 0 v Nothing) now (Just now)
 
 floorVector :: H.Vector -> (Int, Int)
 floorVector (H.Vector x y) = (floor x, floor y)
@@ -539,6 +541,7 @@ gameLoop win grass possibleItems gameSpace players projectiles items = do
 			let len = fromIntegral $ (toInteger e) - (toInteger s)
 			let ratio = (if len < 1 then 1 else len) / (fromIntegral $ chargeLen a)
 			let duration = floor $ minimum [fromIntegral $ maxDuration a, (fromIntegral $ maxDuration a) * ratio]
+			let cost = floor $ minimum [fromIntegral $ energyCost a, (fromIntegral $ energyCost a) * ratio]
 
 			let nextAbility' = (\a ->
 					a {
@@ -546,6 +549,8 @@ gameLoop win grass possibleItems gameSpace players projectiles items = do
 						ended = (\e -> ticks + (e - (started a))) `fmap` ended a
 					}
 				) `fmap` nextAbility
+
+			let p' = updateAnimation ticks $ p {energy = maximum [0, (energy p) - cost], ability = (nextAbility', Nothing) }
 
 			case a of
 				(Attack {}) -> do
@@ -570,9 +575,9 @@ gameLoop win grass possibleItems gameSpace players projectiles items = do
 					H.spaceAdd s body
 					H.spaceAdd s shp
 
-					return (updateAnimation ticks $ p { ability = (nextAbility', Nothing) }, Just newProjectile)
+					return (p', Just newProjectile)
 				_ ->
-					return (updateAnimation ticks $ p { ability = (nextAbility', Nothing) }, Nothing)
+					return (p', Nothing)
 	doAbility _ p = return (p, Nothing)
 	doAbilities players ticks =
 		second catMaybes `fmap` unzip `fmap` mapM (doAbility ticks) players
@@ -735,7 +740,8 @@ player_parser = do
 		string $ T.pack "attack"
 		maxDamage <- ws_int
 		maxKnockback <- ws_int
-		return (Attack maxDamage maxKnockback)
+		energyCost <- ws_int
+		return (Attack maxDamage maxKnockback energyCost)
 	sub_attacks a = do
 		(d1, a1) <- one_sub_attack
 		(d2, a2) <- one_sub_attack

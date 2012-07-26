@@ -40,7 +40,7 @@ fall {
 }
 
 ability1 {
-	attack 2 0
+	attack 2 0 0
 
 	charge 1 {
 		E  15 1 0
@@ -70,7 +70,7 @@ ability1 {
 }
 
 ability2 {
-	attack 10 200
+	attack 10 200 20
 
 	charge 1000 {
 		E   7 4 0
