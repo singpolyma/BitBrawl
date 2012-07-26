@@ -37,6 +37,13 @@ type Animations = Map String AnimationSet
 
 data Direction = E | NE | N | NW | W | SW | S | SE deriving (Show, Read, Enum, Ord, Eq)
 
+data Item = Energy {
+		itemAnimation :: (SDL.Surface, Animation, Ticks),
+		energyBonus   :: Int,
+		itemShape     :: H.Shape
+	}
+	deriving (Eq)
+
 data Projectile = Projectile {
 		pani      :: Maybe (Animation, Ticks, Ticks),
 		damage    :: Int,
@@ -122,6 +129,95 @@ instance CollisionType Player where
 instance CollisionType Projectile where
 	collisionType _ = 2
 
+instance CollisionType Item where
+	collisionType _ = 3
+
+class Drawable a where
+	position :: a -> IO (Int, Int)
+	draw     :: SDL.Surface -> a -> (Int, Int) -> IO ()
+	advance  :: a -> Ticks -> a
+
+	-- Isometric draw of a list, sort by y (which is z)
+	drawByZ :: SDL.Surface -> [a] -> IO ()
+	drawByZ win ds = do
+		positions <- mapM position ds
+		mapM_ (uncurry (draw win)) (sortBy (comparing (snd.snd)) (zip ds positions))
+
+instance Drawable Player where
+	position player = do
+		(x', y') <- floorVector `fmap` (get $ H.position $ H.body $ shape player)
+		return (x' - 32, (-1 * y') - 64)
+
+	draw win player (x,y) = do
+		drawAnimation win (sprites player) (fst $ animation player) (x,y)
+
+		red <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0xff 0 0
+		drawBar (damageAmt player) red 7
+
+		green <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0xff 0
+		drawBar (energy player) green 14
+
+		return ()
+		where
+		drawBar value color y' = do
+			let bar = ((64-32) * value) `div` 100
+			SDL.fillRect win (jRect (x+16) (y-y') bar 5) color
+
+	advance player ticks =
+		let (ani,aniTicks) = advanceAnimation (animation player) (playerAniRate player) ticks in
+		playerWrapAni $ player {animation = (ani, aniTicks)}
+		where
+		playerAniRate (Player {ability = (Nothing, _)}) = 10
+		playerAniRate (Player {ability = (Just (DoingAbility {ended = Nothing, dability = abi}), _), animation = (Animation {frames = fs}, _)}) = case (chargeLen abi) `div` (fromIntegral fs) of
+			0 -> 1
+			r -> 1000 `div` r
+		playerAniRate (Player {ability = (Just (DoingAbility {ended = (Just _), dability = abi}), _), animation = (Animation {frames = fs}, _)}) = case (releaseLen abi) `div` (fromIntegral fs) of
+			0 -> 1
+			r -> 1000 `div` r
+		playerWrapAni p@(Player {ability = (Nothing, _)}) = p {animation = first wrapAnimation (animation p)}
+		playerWrapAni p@(Player {ability = (Just _, _)}) = p {animation = first truncAnimation (animation p)}
+
+instance Drawable Projectile where
+	position projectile = do
+		(x', y') <- floorVector `fmap` (get $ H.position $ H.body $ pshape projectile)
+		(vx, vy) <- floorVector `fmap` (get $ H.velocity $ H.body $ pshape projectile)
+		let x = if vx > 1 then
+				x' - 64
+			else if vy < -1 || vy > 1 then
+				x' - 32
+			else
+				x'
+		let y = if vy < -1 then
+				y' + (64*2)
+			else
+				y'
+		return (x, (-1 * y') - 64)
+
+	draw win (Projectile {pplayer = p, pani = Just (ani,_,_)}) (x,y) = do
+		drawAnimation win (sprites p) ani (x,y)
+	draw _ _ _ = return ()
+
+	advance projectile@(Projectile {pani = Just (a,rate,aniTicks)}) ticks =
+		let (ani,aniTicks') = advanceAnimation (a,aniTicks) rate ticks
+		    p = projectile {pani = Just (wrapAnimation ani, rate, aniTicks')} in
+		if frame ani >= frames ani && isJust (deathPos p) then
+			p {pani = Nothing} -- shape is gone, animation is done
+		else
+			p
+	advance projectile _ = projectile
+
+instance Drawable Item where
+	position item = do
+		(x', y') <- floorVector `fmap` (get $ H.position $ H.body $ itemShape item)
+		return (x' - 32, (-1 * y') - 32)
+
+	draw win (Energy {itemAnimation = (sprites, animation, _)}) (x,y) =
+		drawAnimation win sprites animation (x,y)
+
+	advance item@(Energy {itemAnimation = (sprites,ani,aniTicks)}) ticks =
+		let (ani', aniTicks') = advanceAnimation (ani,aniTicks) 10 ticks in
+		item {itemAnimation = (sprites, wrapAnimation ani', aniTicks')}
+
 programName :: String
 programName = "bitbrawl"
 
@@ -133,6 +229,9 @@ frameTime = fromIntegral (1000 `div` frameRate)
 
 playerSpeed :: (Num a) => a
 playerSpeed = 75
+
+energyDropTime :: (Num a) => a
+energyDropTime = 20000
 
 windowWidth :: (Num a) => a
 windowWidth = 800
@@ -217,28 +316,13 @@ truncAnimation a@(Animation {frame = f, frames = fs, col = c})
 	where
 	maxCol = c + fs
 
+drawAnimation :: SDL.Surface -> SDL.Surface -> Animation -> (Int,Int) -> IO ()
+drawAnimation win sprites animation (x,y) = do
+	let box = jRect x y 64 64
+	SDL.blitSurface sprites (clipAnimation animation) win box
+	return ()
+
 knockedBack now v = DoingAbility "fall" (Block 1 400 0 v Nothing) now (Just now)
-
-playerPosition :: Player -> IO (Int, Int)
-playerPosition player = do
-	(H.Vector x' y') <- get $ H.position $ H.body $ shape player
-	return (floor x' - 32, (-1 * floor y') - 64)
-
-projectilePosition :: Projectile -> IO (Int, Int)
-projectilePosition projectile = do
-	(x', y') <- floorVector `fmap` (get $ H.position $ H.body $ pshape projectile)
-	(vx, vy) <- floorVector `fmap` (get $ H.velocity $ H.body $ pshape projectile)
-	let x = if vx > 1 then
-			x' - 64
-		else if vy < -1 || vy > 1 then
-			x' - 32
-		else
-			x'
-	let y = if vy < -1 then
-			y' + (64*2)
-		else
-			y'
-	return (x, (-1 * y') - 64)
 
 floorVector :: H.Vector -> (Int, Int)
 floorVector (H.Vector x y) = (floor x, floor y)
@@ -288,6 +372,14 @@ selectAnimation p@(Player {
 
 updateAnimation ticks p = p {animation = second (const ticks) $ first (const $ selectAnimation p) (animation p)}
 
+isEnergy (Energy {}) = True
+--isEnergy _ = False
+
+randomLocation = do
+	x <- getStdRandom (randomR (32,windowWidth-32))
+	y <- getStdRandom (randomR (-64,-windowHeight))
+	return (H.Vector x y)
+
 deathChance d e
 	| e < 1 = 100
 	| d < 50 = 0
@@ -308,9 +400,8 @@ maybeEliminate player = do
 	x <- getStdRandom (randomR (0,99))
 	-- When x < change, player in eliminated, respawn
 	if (x < chance) then do
-			x <- getStdRandom (randomR (32,windowWidth-32))
-			y <- getStdRandom (randomR (-64,-windowHeight))
-			(H.position $ H.body $ shape player) $= H.Vector x y
+			newPos <- randomLocation
+			(H.position $ H.body $ shape player) $= newPos
 			return (True, player {damageAmt = 0, energy = 50, deaths = (deaths player) + 1})
 		else
 			return (False, player)
@@ -318,7 +409,7 @@ maybeEliminate player = do
 	chance = deathChance (damageAmt player) (energy player)
 
 
-gameLoop win grass gameSpace players projectiles = do
+gameLoop win grass possibleItems gameSpace players projectiles items = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	ticks <- SDL.getTicks
 	case e of
@@ -326,19 +417,41 @@ gameLoop win grass gameSpace players projectiles = do
 			projectiles' <- doProjectiles ticks
 			(players', newProjectiles) <- doAbilities players ticks
 			let projectiles'' = projectiles' ++ newProjectiles
-			(gameSpace', players'', projectiles''') <- doPhysics ticks projectiles'' players'
-			(players''', projectiles'''') <- doDrawing ticks players'' projectiles'''
-			next gameSpace' players''' projectiles''''
+			(gameSpace', players'', projectiles''', items') <- doPhysics ticks projectiles'' players'
+			(players''', projectiles'''', items'') <- doDrawing ticks players'' projectiles''' items'
+
+			newEnergy <- getStdRandom (randomR (0,energyDropTime `div` frameTime)) :: IO Int
+			items''' <- if newEnergy == 1 then do
+					let Just (Energy {
+							itemAnimation = (sprites,ani,_),
+							energyBonus = bonus
+						}) = find isEnergy possibleItems
+					body <- H.newBody H.infinity H.infinity
+					shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
+
+					let energy = Energy (sprites,ani,ticks) bonus shp
+
+					newPos <- randomLocation
+					H.position body $= newPos
+
+					H.collisionType shp $= collisionType energy
+					let (Space hSpace _ _) = gameSpace in H.spaceAdd hSpace shp
+
+					return (energy:items'')
+				else
+					return items''
+
+			next gameSpace' players''' projectiles'''' items'''
 
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
-			next gameSpace (handleKeyboard ticks KeyDown keysym) projectiles
+			next gameSpace (handleKeyboard ticks KeyDown keysym) projectiles items
 		SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
-			next gameSpace (handleKeyboard ticks KeyUp keysym) projectiles
+			next gameSpace (handleKeyboard ticks KeyUp keysym) projectiles items
 
 		SDL.Quit -> return ()
-		_ -> print e >> next gameSpace players projectiles
+		_ -> print e >> next gameSpace players projectiles items
 	where
-	next = gameLoop win grass
+	next = gameLoop win grass possibleItems
 
 	handleAction ticks (Face d) p = updateAnimation ticks $ p {direction = d}
 	handleAction ticks (Go s) p = updateAnimation ticks $ p {speed = s}
@@ -469,6 +582,7 @@ gameLoop win grass gameSpace players projectiles = do
 
 		mutablePlayers <- mapM newIORef players
 		mutableProjectiles <- mapM newIORef projectiles
+		mutableItems <- mapM (newIORef . Just) items
 
 		-- Reset collision handler every time so the right stuff is in scope
 		H.addCollisionHandler hSpace (collisionType $ head players) (collisionType $ head projectiles) (H.Handler
@@ -509,57 +623,49 @@ gameLoop win grass gameSpace players projectiles = do
 				Nothing
 			)
 
+		H.addCollisionHandler hSpace (collisionType $ head players) (collisionType $ head items) (H.Handler
+				(Just (do
+					(plshp, itshp) <- H.shapes
+
+					liftIO (do
+						let get' = (\f x -> fmap f (get x))
+						[pl] <- filterM (get' ((==plshp) . shape)) mutablePlayers
+						it <- filterM (get' ((==itshp) . itemShape . fromJust)) =<< filterM (get' isJust) mutableItems
+
+						case it of
+							[it] -> do
+								Just item <- get it
+								pl $~ (\player -> player {energy = (energy player) + (energyBonus item)})
+								it $= Nothing
+							_ -> return ()
+
+						return False
+						)
+				))
+				Nothing
+				Nothing
+				Nothing
+			)
+
 		let time = (ticks - spaceTicks) + dtRemainder
 		(time `div` frameTime) `timesLoop` (H.step hSpace (frameTime/1000))
 
 		players' <- mapM get mutablePlayers
 		projectiles' <- mapM get mutableProjectiles
+		items' <- catMaybes `fmap` mapM get mutableItems
 
-		return $ (Space hSpace ticks (time `mod` frameTime), players', projectiles')
-	playerAniRate (Player {ability = (Nothing, _)}) = 10
-	playerAniRate (Player {ability = (Just (DoingAbility {ended = Nothing, dability = abi}), _), animation = (Animation {frames = fs}, _)}) = case (chargeLen abi) `div` (fromIntegral fs) of
-		0 -> 1
-		r -> 1000 `div` r
-	playerAniRate (Player {ability = (Just (DoingAbility {ended = (Just _), dability = abi}), _), animation = (Animation {frames = fs}, _)}) = case (releaseLen abi) `div` (fromIntegral fs) of
-		0 -> 1
-		r -> 1000 `div` r
-	playerWrapAni p@(Player {ability = (Nothing, _)}) = p {animation = first wrapAnimation (animation p)}
-	playerWrapAni p@(Player {ability = (Just _, _)}) = p {animation = first truncAnimation (animation p)}
-	advancePlayerAnimation player ticks =
-		let (ani,aniTicks) = advanceAnimation (animation player) (playerAniRate player) ticks in
-		playerWrapAni $ player {animation = (ani, aniTicks)}
-	advanceProjectileAnimation projectile@(Projectile {pani = Just (a,rate,aniTicks)}) ticks =
-		let (ani,aniTicks') = advanceAnimation (a,aniTicks) rate ticks
-		    p = projectile {pani = Just (wrapAnimation ani, rate, aniTicks')} in
-		if frame ani >= frames ani && isJust (deathPos p) then
-			p {pani = Nothing} -- shape is gone, animation is done
-		else
-			p
-	advanceProjectileAnimation projectile _ = projectile
-	drawAnimation sprites animation (x,y) = do
-		let box = jRect x y 64 64
-		SDL.blitSurface sprites (clipAnimation animation) win box
-		return ()
-	drawPlayer player (x,y) = do
-		drawAnimation (sprites player) (fst $ animation player) (x,y)
-
-		red <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0xff 0 0
-		let damageBar = ((64-32) * (damageAmt player)) `div` 100
-		SDL.fillRect win (jRect (x+16) (y-7) damageBar 5) red
-	drawProjectile (Projectile {pplayer = p, pani = Just (ani,_,_)}) (x,y) = do
-		drawAnimation (sprites p) ani (x,y)
-	drawProjectile _ _ = return ()
-	doDrawing ticks players projectiles = do
-		let players' = map (`advancePlayerAnimation` ticks) players
-		let projectiles' = map (`advanceProjectileAnimation` ticks) projectiles
+		return $ (Space hSpace ticks (time `mod` frameTime), players', projectiles', items')
+	advanceAndDrawByZ ds ticks = do
+		let ds' = map (`advance` ticks) ds
+		drawByZ win ds'
+		return ds'
+	doDrawing ticks players projectiles items = do
 		-- We don't know where the players were before. Erase whole screen
 		SDL.blitSurface grass Nothing win (jRect 0 0 0 0)
 
-		playerPositions <- mapM playerPosition players'
-		mapM_ (uncurry drawPlayer) (sortBy (comparing (snd.snd)) (zip players' playerPositions))
-
-		projectilePositions <- mapM projectilePosition projectiles'
-		mapM_ (uncurry drawProjectile) (sortBy (comparing (snd.snd)) (zip projectiles' projectilePositions))
+		items' <- advanceAndDrawByZ items ticks
+		players' <- advanceAndDrawByZ players ticks
+		projectiles' <- advanceAndDrawByZ projectiles ticks
 
 		let (projectiles'', deadProjectiles) = partition (\proj ->
 				not (isJust (deathPos proj) && isNothing (pani proj))
@@ -571,7 +677,7 @@ gameLoop win grass gameSpace players projectiles = do
 			) deadProjectiles
 
 		SDL.flip win
-		return (players', projectiles'')
+		return (players', projectiles'', items')
 
 newPlayer :: H.Space -> SDL.Surface -> Animations -> Control -> Ticks -> H.CpFloat -> H.Group -> IO Player
 newPlayer space sprites anis controls startTicks mass group = do
@@ -585,9 +691,8 @@ newPlayer space sprites anis controls startTicks mass group = do
 
 	H.group shape $= group
 
-	x <- getStdRandom (randomR (32,windowWidth-32))
-	y <- getStdRandom (randomR (-64,-windowHeight))
-	H.position body $= H.Vector x y
+	pos <- randomLocation
+	H.position body $= pos
 
 	-- Create control body and joint it up
 	control <- H.newBody H.infinity H.infinity
@@ -707,7 +812,11 @@ startGame win grass controls = do
 			newPlayer gameSpace sprites anis c startTicks 10 i
 		) (zip [1..] (reverse controls))
 
-	gameLoop win grass (Space gameSpace startTicks 0) players []
+	orbPath <- fmap head $ findDataFiles ((=="orb.png") . takeFileName)
+	orb <- SDL.load orbPath
+	let energyPellet = Energy (orb, Animation 0 4 0 0, 0) 5 undefined
+	
+	gameLoop win grass [energyPellet] (Space gameSpace startTicks 0) players [] []
 
 	H.freeSpace gameSpace
 	where
