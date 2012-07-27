@@ -28,6 +28,7 @@ import Graphics.UI.SDL.Keysym (SDLKey(..))
 import qualified Graphics.UI.SDL as SDL
 import qualified Graphics.UI.SDL.Image as SDL
 import qualified Graphics.UI.SDL.TTF as SDL.TTF
+import qualified Graphics.UI.SDL.Mixer as SDL.Mixer
 import qualified Physics.Hipmunk as H
 
 type Ticks = Word32
@@ -66,12 +67,14 @@ data Ability = Attack {
 		maxDamage      :: Int,
 		maxKnockback   :: Int,
 		energyCost     :: Int,
+		sound          :: Maybe String,
 		chargeLen      :: Ticks,
 		releaseLen     :: Ticks,
 		maxDuration    :: Ticks,
 		projectileAnis :: Maybe (DirectedAnimations, Ticks)
 	} |
 	Block {
+		sound          :: Maybe String,
 		energyCost     :: Int,
 		chargeLen      :: Ticks,
 		releaseLen     :: Ticks,
@@ -99,6 +102,7 @@ data Animation = Animation {
 
 data Player = Player {
 		sprites    :: SDL.Surface,
+		music      :: SDL.Mixer.Music,
 		shape      :: H.Shape,
 		control    :: H.Body,
 		controls   :: Control,
@@ -280,6 +284,10 @@ timer t f = do
 
 jRect x y w h = Just $ SDL.Rect x y w h
 
+switchMusic music = do
+	_ <- SDL.Mixer.tryFadeOutMusic 1000
+	SDL.Mixer.fadeInMusic music (-1) 1000
+
 splitDirection  E = [E]
 splitDirection NE = [N,E]
 splitDirection  N = [N]
@@ -324,7 +332,7 @@ drawAnimation win sprites animation (x,y) = do
 	SDL.blitSurface sprites (clipAnimation animation) win box
 	return ()
 
-knockedBack now v = DoingAbility "fall" (Block 0 1 400 0 v Nothing) now (Just now)
+knockedBack now v = DoingAbility "fall" (Block Nothing 0 1 400 0 v Nothing) now (Just now)
 
 floorVector :: H.Vector -> (Int, Int)
 floorVector (H.Vector x y) = (floor x, floor y)
@@ -411,7 +419,7 @@ maybeEliminate player = do
 	chance = deathChance (damageAmt player) (energy player)
 
 
-gameLoop win grass possibleItems gameSpace players projectiles items = do
+gameLoop win sounds grass possibleItems winner gameSpace players projectiles items = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	ticks <- SDL.getTicks
 	case e of
@@ -443,17 +451,20 @@ gameLoop win grass possibleItems gameSpace players projectiles items = do
 				else
 					return items''
 
-			next gameSpace' players''' projectiles'''' items'''
+			let winner' = minimumBy (comparing deaths) players
+			unless (winner == (control winner')) (switchMusic (music winner'))
+
+			next (control winner') gameSpace' players''' projectiles'''' items'''
 
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
-			next gameSpace (handleKeyboard ticks KeyDown keysym) projectiles items
+			next winner gameSpace (handleKeyboard ticks KeyDown keysym) projectiles items
 		SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
-			next gameSpace (handleKeyboard ticks KeyUp keysym) projectiles items
+			next winner gameSpace (handleKeyboard ticks KeyUp keysym) projectiles items
 
 		SDL.Quit -> return ()
-		_ -> print e >> next gameSpace players projectiles items
+		_ -> print e >> next winner gameSpace players projectiles items
 	where
-	next = gameLoop win grass possibleItems
+	next = gameLoop win sounds grass possibleItems
 
 	handleAction ticks (Face d) p = updateAnimation ticks $ p {direction = d}
 	handleAction ticks (Go s) p = updateAnimation ticks $ p {speed = s}
@@ -551,6 +562,11 @@ gameLoop win grass possibleItems gameSpace players projectiles items = do
 				) `fmap` nextAbility
 
 			let p' = updateAnimation ticks $ p {energy = maximum [0, (energy p) - cost], ability = (nextAbility', Nothing) }
+
+			when (isJust $ sound a) $ do
+				let s = sounds ! (fromJust $ sound a)
+				_ <- SDL.Mixer.playChannel (-1) s 0
+				return ()
 
 			case a of
 				(Attack {}) -> do
@@ -684,8 +700,8 @@ gameLoop win grass possibleItems gameSpace players projectiles items = do
 		SDL.flip win
 		return (players', projectiles'', items')
 
-newPlayer :: H.Space -> SDL.Surface -> Animations -> Control -> Ticks -> H.CpFloat -> H.Group -> IO Player
-newPlayer space sprites anis controls startTicks mass group = do
+newPlayer :: H.Space -> SDL.Surface -> SDL.Mixer.Music -> Animations -> Control -> Ticks -> H.CpFloat -> H.Group -> IO Player
+newPlayer space sprites music anis controls startTicks mass group = do
 	-- Create body and shape with mass and moment, add to space
 	body <- H.newBody mass moment
 	shape <- H.newShape body shapeType (H.Vector 0 0)
@@ -704,7 +720,7 @@ newPlayer space sprites anis controls startTicks mass group = do
 	mkConstraint  control body (H.Pivot2 (H.Vector 0 0) (H.Vector 0 0)) 0 10000
 	mkConstraint control body (H.Gear 0 1) 1.2 50000
 
-	let player = updateAnimation startTicks $ Player sprites shape control controls (undefined, startTicks) anis (Nothing, Nothing) E 0 50 0 0
+	let player = updateAnimation startTicks $ Player sprites music shape control controls (undefined, startTicks) anis (Nothing, Nothing) E 0 50 0 0
 	H.collisionType shape $= collisionType player
 	return player
 	where
@@ -719,12 +735,14 @@ newPlayer space sprites anis controls startTicks mass group = do
 forkIO_ :: IO a -> IO ()
 forkIO_ f = (forkIO (f >> return ())) >> return ()
 
-player_parser :: Parser (String, Animations)
+player_parser :: Parser (String, String, Animations)
 player_parser = do
 	name <- takeWhile1 (not.isEndOfLine)
 	endOfLine
+	music <- takeWhile1 (not.isEndOfLine)
+	endOfLine
 	anis <- (fmap Map.fromList $ many animation_set) <* skipSpace <* endOfInput
-	return (T.unpack name, anis)
+	return (T.unpack name, T.unpack music, anis)
 	where
 	animation_set = do
 		skipSpace
@@ -741,7 +759,15 @@ player_parser = do
 		maxDamage <- ws_int
 		maxKnockback <- ws_int
 		energyCost <- ws_int
-		return (Attack maxDamage maxKnockback energyCost)
+		sound <- option Nothing (fmap Just abisound)
+		return (Attack maxDamage maxKnockback energyCost sound)
+	abisound = do
+		skipSpace
+		string $ T.pack "sound"
+		skipSpace
+		file <- takeWhile1 (not.isEndOfLine)
+		endOfLine
+		return $ T.unpack file
 	sub_attacks a = do
 		(d1, a1) <- one_sub_attack
 		(d2, a2) <- one_sub_attack
@@ -801,7 +827,7 @@ player_parser = do
 
 sdlKeyName = drop 5 . show
 
-startGame win grass controls = do
+startGame menuMusic win sounds grass controls = do
 	gameSpace <- H.newSpace
 	startTicks <- SDL.getTicks
 
@@ -814,15 +840,16 @@ startGame win grass controls = do
 			line (0, -windowHeight) (windowWidth, -windowHeight)
 		]
 
-	players <- mapM (\(i,((_,anis,sprites), c)) ->
-			newPlayer gameSpace sprites anis c startTicks 10 i
+	players <- mapM (\(i,((_,anis,sprites,music), c)) ->
+			newPlayer gameSpace sprites music anis c startTicks 10 i
 		) (zip [1..] (reverse controls))
 
 	orbPath <- fmap head $ findDataFiles ((=="orb.png") . takeFileName)
 	orb <- SDL.load orbPath
 	let energyPellet = Energy (orb, Animation 0 4 0 0, 0) 5 undefined
 	
-	gameLoop win grass [energyPellet] (Space gameSpace startTicks 0) players [] []
+	switchMusic (music $ head players)
+	gameLoop win sounds grass [energyPellet] (control $ head players) (Space gameSpace startTicks 0) players [] []
 
 	H.freeSpace gameSpace
 	where
@@ -830,8 +857,9 @@ startGame win grass controls = do
 	pinShape body shape = H.newShape body shape (H.Vector 0 0)
 	line (x1, y1) (x2, y2) = H.LineSegment (H.Vector x1 y1) (H.Vector x2 y2) 0
 
-playerJoinLoop :: SDL.Surface -> SDL.TTF.Font -> SDL.Surface -> [(String, Animations, SDL.Surface)] -> IO ()
-playerJoinLoop win menuFont grass pcs =
+playerJoinLoop :: SDL.Mixer.Music -> SDL.Surface -> SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> [(String, Animations, SDL.Surface, SDL.Mixer.Music)] -> IO ()
+playerJoinLoop menuMusic win menuFont sounds grass pcs = do
+	switchMusic menuMusic
 	loop Nothing 0 kActions [(0, KeyboardControl [])]
 	where
 	kActions = [KFace E, KFace N, KFace W, KFace S, KAbility1, KAbility2, KStart]
@@ -859,7 +887,7 @@ playerJoinLoop win menuFont grass pcs =
 				case existing of
 					0 -> loop (Just keysym) 0 aLeft controls'
 					1 -> loop Nothing 0 aLeft controls'
-					-1 -> startGame win grass (tail $ map (\(p,c) -> (pcs!!p,c)) controls)
+					-1 -> startGame menuMusic win sounds grass (tail $ map (\(p,c) -> (pcs!!p,c)) controls)
 			SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
 				loop (if (Just keysym) == keyDown then Nothing else keyDown) 0 aLeft controls
 			SDL.Quit -> return ()
@@ -883,7 +911,7 @@ playerJoinLoop win menuFont grass pcs =
 		drawStartMsg
 		labelH <- drawActionLabel ((length controls)+1) a
 		mapM (\(i,(p,_)) -> do
-				let (name, anis, sprites) = pcs !! p
+				let (name, anis, sprites, _) = pcs !! p
 				let x = 10+(i*74)
 				let y = 20+(labelH*2)
 				drawText win x y menuFont ("Player "++show (i+1)) (SDL.Color 0xff 0xff 0xff)
@@ -923,9 +951,11 @@ playerJoinLoop win menuFont grass pcs =
 withExternalLibs f = SDL.withInit [SDL.InitEverything] $ do
 	H.initChipmunk
 	SDL.TTF.init
+	SDL.Mixer.openAudio SDL.Mixer.defaultFrequency SDL.Mixer.AudioS16Sys 2 1024
 
 	f
 
+	SDL.Mixer.closeAudio
 	SDL.TTF.quit
 	SDL.quit
 
@@ -940,9 +970,26 @@ main = withExternalLibs $ do
 	grass <- SDL.load grassPath >>= generateGrass
 
 	pcs <- findDataFiles ((==".player") . takeExtension) >>= mapM (\p -> do
-			Right (name,anis) <- fmap (parseOnly player_parser) $ T.readFile p
+			Right (name,music,anis) <- fmap (parseOnly player_parser) $ T.readFile p
 			sprites <- SDL.load $ replaceExtension p "png"
-			return (name, anis, sprites)
+			mpth <- fmap head $ findDataFiles ((==music) . takeFileName)
+			m <- SDL.Mixer.loadMUS mpth
+			return (name, anis, sprites, m)
 		)
 
-	playerJoinLoop win menuFont grass pcs
+	let sounds = mapMaybe (\a -> case a of
+			AbilityAnimation abi _ -> sound abi
+			_ -> Nothing
+		) $ concatMap (\(_,a,_,_) -> map snd $ Map.toList a) pcs
+
+	soundsMap <- Map.fromList `fmap` mapM (\s-> do
+			path <- fmap head $ findDataFiles ((==s) . takeFileName)
+			sound <- SDL.Mixer.loadWAV path
+			return (s, sound)
+		) sounds
+
+
+	menuMusicPath <- fmap head $ findDataFiles ((=="menu.ogg") . takeFileName)
+	menuMusic <- SDL.Mixer.loadMUS menuMusicPath
+
+	playerJoinLoop menuMusic win menuFont soundsMap grass pcs
