@@ -846,7 +846,7 @@ startGame menuMusic win sounds grass controls = do
 
 	orbPath <- fmap head $ findDataFiles ((=="orb.png") . takeFileName)
 	orb <- SDL.load orbPath
-	let energyPellet = Energy (orb, Animation 0 4 0 0, 0) 5 undefined
+	let energyPellet = Energy (orb, Animation 0 4 0 0, 0) 10 undefined
 	
 	switchMusic (music $ head players)
 	gameLoop win sounds grass [energyPellet] (control $ head players) (Space gameSpace startTicks 0) players [] []
