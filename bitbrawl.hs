@@ -412,7 +412,7 @@ maybeEliminate player = do
 	if (x < chance) then do
 			newPos <- randomLocation
 			(H.position $ H.body $ shape player) $= newPos
-			return (True, player {damageAmt = 0, energy = 50, deaths = (deaths player) + 1})
+			return (True, player {damageAmt = 0, energy = 50, deaths = (deaths player) + 1, ability  = (Nothing,Nothing)})
 		else
 			return (False, player)
 	where
