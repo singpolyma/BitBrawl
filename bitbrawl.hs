@@ -391,7 +391,7 @@ randomLocation = do
 	return (H.Vector x y)
 
 deathChance d e
-	| e < 1 = 100
+	| (e `div` 25) < 1 = 100
 	| d < 50 = 0
 	| d < 60 = doE 1
 	| d < 70 = doE 4
