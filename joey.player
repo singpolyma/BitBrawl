@@ -42,6 +42,7 @@ fall {
 
 ability1 {
 	attack 2 0 0
+	sound metal-bowl-with-water.flac
 
 	charge 1 {
 		E  15 1 0
@@ -72,6 +73,7 @@ ability1 {
 
 ability2 {
 	attack 10 200 20
+	sound metal-switch.flac
 
 	charge 1000 {
 		E   7 4 0
