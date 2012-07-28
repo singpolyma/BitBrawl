@@ -950,6 +950,7 @@ startGame menuMusic win fonts sounds grass controls = do
 	let energyPellet = Energy (orb, Animation 0 4 0 0, 0) 10 undefined
 	
 	switchMusic (music $ head players)
+	touchForeignPtr menuMusic
 	gameLoop win fonts sounds grass startTicks [energyPellet] (control $ head players) (Space gameSpace startTicks 0) players [] []
 
 	H.freeSpace gameSpace
