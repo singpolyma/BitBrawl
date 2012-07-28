@@ -3,7 +3,7 @@ import Control.Arrow
 import Control.Applicative
 import Control.Monad.IO.Class
 import Control.Concurrent (forkIO, threadDelay)
-import Foreign (new, peek, free, nullPtr, castPtr)
+--import Foreign (new, peek, free, nullPtr, castPtr)
 import Data.Ord
 import Data.Char hiding (Space)
 import Data.List
@@ -16,6 +16,11 @@ import System.Directory
 import System.Environment (getEnv)
 import Data.StateVar
 import Data.Attoparsec.Text
+
+import Data.Colour.RGBSpace (Colour, RGB)
+import qualified Data.Colour.RGBSpace as Colour
+import qualified Data.Colour.SRGB as Colour
+import qualified Data.Colour.RGBSpace.HSV as Colour
 
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -30,6 +35,13 @@ import qualified Graphics.UI.SDL.Image as SDL
 import qualified Graphics.UI.SDL.TTF as SDL.TTF
 import qualified Graphics.UI.SDL.Mixer as SDL.Mixer
 import qualified Physics.Hipmunk as H
+
+--import qualified Graphics.UI.SDL.Primitives as SDL
+-- For binding to SDL_gfx ourselves
+import Foreign
+import Foreign.C
+import Foreign.Ptr
+import Graphics.UI.SDL.Utilities (intToBool, fromCInt)
 
 type Ticks = Word32
 type Speed = H.CpFloat
@@ -101,6 +113,7 @@ data Animation = Animation {
 	deriving (Show, Read, Eq)
 
 data Player = Player {
+		color      :: SDL.Color,
 		sprites    :: SDL.Surface,
 		music      :: SDL.Mixer.Music,
 		shape      :: H.Shape,
@@ -126,6 +139,9 @@ data Control = KeyboardControl [(SDLKey, KeyboardAction)] deriving (Show, Eq)
 
 data Space = Space H.Space Ticks Ticks
 
+instance Eq SDL.Color where
+	(SDL.Color r1 g1 b1) == (SDL.Color r2 g2 b2) = (r1,g2,b1) == (r2,g2,b2)
+
 class CollisionType a where
 	collisionType :: a -> H.CollisionType
 
@@ -149,18 +165,29 @@ class Drawable a where
 		positions <- mapM position ds
 		mapM_ (uncurry (draw win)) (sortBy (comparing (snd.snd)) (zip ds positions))
 
+foreign import ccall unsafe "aacircleRGBA" gfxAACircleRGBA ::
+	Ptr SDL.SurfaceStruct ->
+	Int16 -> Int16 -> Int16 ->
+	Word8 -> Word8 -> Word8 -> Word8 ->
+	IO CInt
+
+aaCircle :: SDL.Surface -> Int16 -> Int16 -> Int16 -> SDL.Color -> IO Bool
+aaCircle surface x y rad (SDL.Color r g b) = withForeignPtr surface $ \ptr ->
+                                   intToBool (-1) (fmap fromCInt $ gfxAACircleRGBA ptr x y rad r g b 0xff)
+
 instance Drawable Player where
 	position player = do
 		(x', y') <- floorVector `fmap` (get $ H.position $ H.body $ shape player)
-		return (x' - 32, (-1 * y') - 64)
+		return (x' - 32, (-1 * y') - 54)
 
 	draw win player (x,y) = do
+		aaCircle win (fromIntegral $ x+32) (fromIntegral $ y+54) 16 (color player)
 		drawAnimation win (sprites player) (fst $ animation player) (x,y)
 
-		red <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0xff 0 0
+		red <- color2pixel win $ SDL.Color 0xff 0 0
 		drawBar (damageAmt player) red 7
 
-		green <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0 0xff 0
+		green <- color2pixel win $ SDL.Color 0 0xff 0
 		drawBar (energy player) green 14
 
 		return ()
@@ -275,6 +302,18 @@ findDataFiles f = do
 	return $ filter f files
 	where
 	dirContents x = mapM (canonicalizePath  . normalise . (x </>)) =<< getDirectoryContents x
+
+srgb2colour :: (Floating a, Ord a) => RGB a -> Colour a
+srgb2colour = Colour.uncurryRGB (Colour.rgbUsingSpace Colour.sRGBSpace)
+
+colour2sdl :: (Floating a, RealFrac a) => Colour a -> SDL.Color
+colour2sdl = (Colour.uncurryRGB SDL.Color) . Colour.toSRGB24
+
+hsv2sdl :: (RealFrac a, Ord a, Floating a) => a -> a -> a -> SDL.Color
+hsv2sdl h s v = colour2sdl $ srgb2colour $ Colour.hsv h s v
+
+color2pixel :: SDL.Surface -> SDL.Color -> IO SDL.Pixel
+color2pixel win (SDL.Color r g b) = SDL.mapRGB (SDL.surfaceGetPixelFormat win) r g b
 
 timer :: Int -> IO a -> IO ()
 timer t f = do
@@ -711,6 +750,11 @@ newPlayer space sprites music anis controls startTicks mass group = do
 	H.spaceAdd space shape
 
 	H.group shape $= group
+	let v = case group `mod` 3 of
+		0 -> 0.8
+		1 -> 0.9
+		2 -> 1.0
+	let c = hsv2sdl (fromIntegral $ (group * 45) `mod` 360) 1 v
 
 	pos <- randomLocation
 	H.position body $= pos
@@ -720,7 +764,7 @@ newPlayer space sprites music anis controls startTicks mass group = do
 	mkConstraint  control body (H.Pivot2 (H.Vector 0 0) (H.Vector 0 0)) 0 10000
 	mkConstraint control body (H.Gear 0 1) 1.2 50000
 
-	let player = updateAnimation startTicks $ Player sprites music shape control controls (undefined, startTicks) anis (Nothing, Nothing) E 0 50 0 0
+	let player = updateAnimation startTicks $ Player c sprites music shape control controls (undefined, startTicks) anis (Nothing, Nothing) E 0 50 0 0
 	H.collisionType shape $= collisionType player
 	return player
 	where
@@ -922,7 +966,7 @@ playerJoinLoop menuMusic win menuFont sounds grass pcs = do
 			) (zip [0..] (reverse controls))
 		return labelH
 	onTimer (Just keysym) downFor (a:aLeft) ((p,c):controls) = do
-		red <- SDL.mapRGB (SDL.surfaceGetPixelFormat win) 0xff 0 0
+		red <- color2pixel win $ SDL.Color 0xff 0 0
 		SDL.blitSurface grass Nothing win (jRect 0 0 0 0) -- erase screen
 
 		labelH <- drawLabelAndPlayers a controls
