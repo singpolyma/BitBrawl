@@ -454,7 +454,7 @@ maybeEliminate player = do
 	chance = deathChance (damageAmt player) (energy player)
 
 
-gameLoop win sounds grass possibleItems winner gameSpace players projectiles items = do
+gameLoop win fonts sounds grass possibleItems winner gameSpace players projectiles items = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	ticks <- SDL.getTicks
 	case e of
@@ -499,7 +499,7 @@ gameLoop win sounds grass possibleItems winner gameSpace players projectiles ite
 		SDL.Quit -> return ()
 		_ -> print e >> next winner gameSpace players projectiles items
 	where
-	next = gameLoop win sounds grass possibleItems
+	next = gameLoop win fonts sounds grass possibleItems
 
 	handleAction ticks (Face d) p = updateAnimation ticks $ p {direction = d}
 	handleAction ticks (Go s) p = updateAnimation ticks $ p {speed = s}
@@ -715,6 +715,15 @@ gameLoop win sounds grass possibleItems winner gameSpace players projectiles ite
 		let ds' = map (`advance` ticks) ds
 		drawByZ win ds'
 		return ds'
+	drawPlayerStat offset w h player = do
+		white <- color2pixel win $ SDL.Color 0xff 0 0
+		group <- fmap fromIntegral $ get $ H.group $ shape player
+		let xadj = if deaths player < 10 then w `div` 2 else 0
+		let (sx, sy) = (offset+((group-1)*(w+6)), h)
+		deaths <- SDL.TTF.renderUTF8Blended (fonts ! "stats") (show $ deaths player) (SDL.Color 0xaa 0 0)
+		c <- color2pixel win $ color player
+		SDL.fillRect win (jRect (sx-2) (sy-2) (w+4) (h+4)) c
+		SDL.blitSurface deaths Nothing win (jRect (sx+xadj) sy 0 0)
 	doDrawing ticks players projectiles items = do
 		-- We don't know where the players were before. Erase whole screen
 		SDL.blitSurface grass Nothing win (jRect 0 0 0 0)
@@ -722,6 +731,12 @@ gameLoop win sounds grass possibleItems winner gameSpace players projectiles ite
 		items' <- advanceAndDrawByZ items ticks
 		players' <- advanceAndDrawByZ players ticks
 		projectiles' <- advanceAndDrawByZ projectiles ticks
+
+		(w, h) <- SDL.TTF.utf8Size (fonts ! "stats") "00"
+		(offset, _) <- SDL.TTF.utf8Size (fonts ! "stats") "Deaths  "
+		label <- SDL.TTF.renderUTF8Blended (fonts ! "stats") "Deaths  " (SDL.Color 0xff 0 0)
+		SDL.blitSurface label Nothing win (jRect 10 h 0 0)
+		mapM_ (drawPlayerStat (offset+10) w h) players
 
 		let (projectiles'', deadProjectiles) = partition (\proj ->
 				not (isJust (deathPos proj) && isNothing (pani proj))
@@ -867,7 +882,7 @@ player_parser = do
 
 sdlKeyName = drop 5 . show
 
-startGame menuMusic win sounds grass controls = do
+startGame menuMusic win fonts sounds grass controls = do
 	gameSpace <- H.newSpace
 	startTicks <- SDL.getTicks
 
@@ -889,7 +904,7 @@ startGame menuMusic win sounds grass controls = do
 	let energyPellet = Energy (orb, Animation 0 4 0 0, 0) 10 undefined
 	
 	switchMusic (music $ head players)
-	gameLoop win sounds grass [energyPellet] (control $ head players) (Space gameSpace startTicks 0) players [] []
+	gameLoop win fonts sounds grass [energyPellet] (control $ head players) (Space gameSpace startTicks 0) players [] []
 
 	H.freeSpace gameSpace
 	where
@@ -897,11 +912,12 @@ startGame menuMusic win sounds grass controls = do
 	pinShape body shape = H.newShape body shape (H.Vector 0 0)
 	line (x1, y1) (x2, y2) = H.LineSegment (H.Vector x1 y1) (H.Vector x2 y2) 0
 
-playerJoinLoop :: SDL.Mixer.Music -> SDL.Surface -> SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> [(String, Animations, SDL.Surface, SDL.Mixer.Music)] -> IO ()
-playerJoinLoop menuMusic win menuFont sounds grass pcs = do
+playerJoinLoop :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> [(String, Animations, SDL.Surface, SDL.Mixer.Music)] -> IO ()
+playerJoinLoop menuMusic win fonts sounds grass pcs = do
 	switchMusic menuMusic
 	loop Nothing 0 kActions [(0, KeyboardControl [])]
 	where
+	menuFont = fonts ! "menu"
 	kActions = [KFace E, KFace N, KFace W, KFace S, KAbility1, KAbility2, KStart]
 	kActionString (KFace E) = "East (Right)"
 	kActionString (KFace N) = "North (Up)"
@@ -927,7 +943,7 @@ playerJoinLoop menuMusic win menuFont sounds grass pcs = do
 				case existing of
 					0 -> loop (Just keysym) 0 aLeft controls'
 					1 -> loop Nothing 0 aLeft controls'
-					-1 -> startGame menuMusic win sounds grass (tail $ map (\(p,c) -> (pcs!!p,c)) controls)
+					-1 -> startGame menuMusic win fonts sounds grass (tail $ map (\(p,c) -> (pcs!!p,c)) controls)
 			SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
 				loop (if (Just keysym) == keyDown then Nothing else keyDown) 0 aLeft controls
 			SDL.Quit -> return ()
@@ -1006,6 +1022,11 @@ main = withExternalLibs $ do
 	menuFontPath <- fmap head $ findDataFiles ((=="PortLligatSans-Regular.ttf") . takeFileName)
 	menuFont <- SDL.TTF.openFont menuFontPath 20
 
+	numberFontPath <- fmap head $ findDataFiles ((=="CevicheOne-Regular.ttf") . takeFileName)
+	statsFont <- SDL.TTF.openFont numberFontPath 30
+
+	let fonts = Map.fromList [("menu", menuFont), ("stats", statsFont)]
+
 	grassPath <- fmap head $ findDataFiles ((=="grass.png") . takeFileName)
 	grass <- SDL.load grassPath >>= generateGrass
 
@@ -1032,4 +1053,4 @@ main = withExternalLibs $ do
 	menuMusicPath <- fmap head $ findDataFiles ((=="menu.ogg") . takeFileName)
 	menuMusic <- SDL.Mixer.loadMUS menuMusicPath
 
-	playerJoinLoop menuMusic win menuFont soundsMap grass pcs
+	playerJoinLoop menuMusic win fonts soundsMap grass pcs
