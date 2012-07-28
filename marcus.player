@@ -1,5 +1,5 @@
 Marcus
-marcus.flac
+marcus.ogg
 
 walk {
 	E  11 9 0
@@ -72,7 +72,7 @@ ability1 {
 
 ability2 {
 	attack 25 150 30
-	sound firelion.flac
+	sound firelion.ogg
 
 	charge 2000 {
 		E   3 4 0
