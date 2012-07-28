@@ -1,8 +1,8 @@
 == Build Instructions ==
 
-These instructions have been tested on Ubuntu 12.04, and are not guarenteed on any other platform.
+These instructions have been tested on Ubuntu 12.04, and are not guaranteed on any other platform.
 
-I am using cabal for all Haskell dependencies because some dependencies need to be newer that what is in Ubuntu.  Hopefully, this will change.
+I am using cabal for all Haskell dependencies because some dependencies need to be newer than what is in Ubuntu.  Hopefully, this will change.
 
 === Install GHC and Cabal ===
 
@@ -24,6 +24,6 @@ I am using cabal for all Haskell dependencies because some dependencies need to 
 
 === Done ===
 
-There should now be a binary at dist/build/bitbrawl/bitbrawl that you can run to run the game.
+There should now be a binary at dist/build/bitbrawl/bitbrawl that you can run to start the game.
 
 NOTE: there is a make install rule in this Makefile, however **it is not verified to work**.
