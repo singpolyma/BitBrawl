@@ -1,0 +1,6 @@
+*.o
+*.a
+*.hi
+dist/
+dist-ghc/
+report.html
