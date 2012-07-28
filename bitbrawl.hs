@@ -262,6 +262,9 @@ playerSpeed = 75
 energyDropTime :: (Num a) => a
 energyDropTime = 20000
 
+timeLimit :: (Num a) => a
+timeLimit = 120000
+
 windowWidth :: (Num a) => a
 windowWidth = 800
 
@@ -454,42 +457,46 @@ maybeEliminate player = do
 	chance = deathChance (damageAmt player) (energy player)
 
 
-gameLoop win fonts sounds grass possibleItems winner gameSpace players projectiles items = do
+gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace players projectiles items = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	ticks <- SDL.getTicks
 	case e of
-		SDL.User SDL.UID0 _ _ _ -> do
-			projectiles' <- doProjectiles ticks
-			(players', newProjectiles) <- doAbilities players ticks
-			let projectiles'' = projectiles' ++ newProjectiles
-			(gameSpace', players'', projectiles''', items') <- doPhysics ticks projectiles'' players'
-			(players''', projectiles'''', items'') <- doDrawing ticks players'' projectiles''' items'
+		SDL.User SDL.UID0 _ _ _
+			| timeLimit - (toInteger $ ticks - startTicks) < 1000 ->
+				-- Game over
+				return ()
+			| otherwise -> do
+				projectiles' <- doProjectiles ticks
+				(players', newProjectiles) <- doAbilities players ticks
+				let projectiles'' = projectiles' ++ newProjectiles
+				(gameSpace', players'', projectiles''', items') <- doPhysics ticks projectiles'' players'
+				(players''', projectiles'''', items'') <- doDrawing ticks players'' projectiles''' items'
 
-			newEnergy <- getStdRandom (randomR (0,energyDropTime `div` frameTime)) :: IO Int
-			items''' <- if newEnergy == 1 then do
-					let Just (Energy {
-							itemAnimation = (sprites,ani,_),
-							energyBonus = bonus
-						}) = find isEnergy possibleItems
-					body <- H.newBody H.infinity H.infinity
-					shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
+				newEnergy <- getStdRandom (randomR (0,energyDropTime `div` frameTime)) :: IO Int
+				items''' <- if newEnergy == 1 then do
+						let Just (Energy {
+								itemAnimation = (sprites,ani,_),
+								energyBonus = bonus
+							}) = find isEnergy possibleItems
+						body <- H.newBody H.infinity H.infinity
+						shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
 
-					let energy = Energy (sprites,ani,ticks) bonus shp
+						let energy = Energy (sprites,ani,ticks) bonus shp
 
-					newPos <- randomLocation
-					H.position body $= newPos
+						newPos <- randomLocation
+						H.position body $= newPos
 
-					H.collisionType shp $= collisionType energy
-					let (Space hSpace _ _) = gameSpace in H.spaceAdd hSpace shp
+						H.collisionType shp $= collisionType energy
+						let (Space hSpace _ _) = gameSpace in H.spaceAdd hSpace shp
 
-					return (energy:items'')
-				else
-					return items''
+						return (energy:items'')
+					else
+						return items''
 
-			let winner' = minimumBy (comparing deaths) players
-			unless (winner == (control winner')) (switchMusic (music winner'))
+				let winner' = minimumBy (comparing deaths) players
+				unless (winner == (control winner')) (switchMusic (music winner'))
 
-			next (control winner') gameSpace' players''' projectiles'''' items'''
+				next (control winner') gameSpace' players''' projectiles'''' items'''
 
 		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
 			next winner gameSpace (handleKeyboard ticks KeyDown keysym) projectiles items
@@ -499,7 +506,7 @@ gameLoop win fonts sounds grass possibleItems winner gameSpace players projectil
 		SDL.Quit -> return ()
 		_ -> print e >> next winner gameSpace players projectiles items
 	where
-	next = gameLoop win fonts sounds grass possibleItems
+	next = gameLoop win fonts sounds grass startTicks possibleItems
 
 	handleAction ticks (Face d) p = updateAnimation ticks $ p {direction = d}
 	handleAction ticks (Go s) p = updateAnimation ticks $ p {speed = s}
@@ -719,11 +726,14 @@ gameLoop win fonts sounds grass possibleItems winner gameSpace players projectil
 		white <- color2pixel win $ SDL.Color 0xff 0 0
 		group <- fmap fromIntegral $ get $ H.group $ shape player
 		let xadj = if deaths player < 10 then w `div` 2 else 0
-		let (sx, sy) = (offset+((group-1)*(w+6)), h)
+		let (sx, sy) = (offset+((group-1)*(w+6)), h+5)
 		deaths <- SDL.TTF.renderUTF8Blended (fonts ! "stats") (show $ deaths player) (SDL.Color 0xaa 0 0)
 		c <- color2pixel win $ color player
 		SDL.fillRect win (jRect (sx-2) (sy-2) (w+4) (h+4)) c
 		SDL.blitSurface deaths Nothing win (jRect (sx+xadj) sy 0 0)
+	zeroPad s
+		| length s < 2 = "0" ++ s
+		| otherwise = s
 	doDrawing ticks players projectiles items = do
 		-- We don't know where the players were before. Erase whole screen
 		SDL.blitSurface grass Nothing win (jRect 0 0 0 0)
@@ -737,6 +747,14 @@ gameLoop win fonts sounds grass possibleItems winner gameSpace players projectil
 		label <- SDL.TTF.renderUTF8Blended (fonts ! "stats") "Deaths  " (SDL.Color 0xff 0 0)
 		SDL.blitSurface label Nothing win (jRect 10 h 0 0)
 		mapM_ (drawPlayerStat (offset+10) w h) players
+
+		let minutes = (timeLimit - (ticks - startTicks)) `div` (1000*60)
+		let seconds = ((timeLimit - (ticks - startTicks)) `div` 1000) - (minutes*60)
+		let clockS = (zeroPad $ show minutes) ++ ":" ++ (zeroPad $ show seconds)
+		(w, h) <- SDL.TTF.utf8Size (fonts ! "stats") clockS
+		clock <- SDL.TTF.renderUTF8Blended (fonts ! "stats") clockS (SDL.Color 0xff 0xff 0xff)
+		let centre = (windowWidth `div` 2) - (w `div` 2)
+		SDL.blitSurface clock Nothing win (jRect centre 5 0 0)
 
 		let (projectiles'', deadProjectiles) = partition (\proj ->
 				not (isJust (deathPos proj) && isNothing (pani proj))
@@ -904,7 +922,7 @@ startGame menuMusic win fonts sounds grass controls = do
 	let energyPellet = Energy (orb, Animation 0 4 0 0, 0) 10 undefined
 	
 	switchMusic (music $ head players)
-	gameLoop win fonts sounds grass [energyPellet] (control $ head players) (Space gameSpace startTicks 0) players [] []
+	gameLoop win fonts sounds grass startTicks [energyPellet] (control $ head players) (Space gameSpace startTicks 0) players [] []
 
 	H.freeSpace gameSpace
 	where
