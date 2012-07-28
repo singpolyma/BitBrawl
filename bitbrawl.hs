@@ -456,6 +456,33 @@ maybeEliminate player = do
 	where
 	chance = deathChance (damageAmt player) (energy player)
 
+winScreen win fonts players = do
+	black <- color2pixel win $ SDL.Color 0 0 0
+	SDL.fillRect win (jRect 0 0 windowWidth windowHeight) black
+	(w, h) <- SDL.TTF.utf8Size (fonts ! "menu") "Press any key to exit"
+	anykey <- SDL.TTF.renderUTF8Blended (fonts ! "menu") "Press any key to exit" (SDL.Color 0xff 0xff 0xff)
+	SDL.blitSurface anykey Nothing win (jRect ((windowWidth `div` 2) - (w `div` 2)) 10 0 0)
+	mapM_ (\(i,player) -> do
+			let (x,y) = ((windowWidth `div` 2) - (windowWidth `div` 4), (10+h+5)+(i*(64+10)))
+			c <- color2pixel win $ color player
+			SDL.fillRect win (jRect x y (windowWidth `div` 2) (64+4)) c
+			SDL.blitSurface (sprites player) (clipAnimation $ simpleAni (animations player) "idle" E) win (jRect (x+2) (y+2) 0 0)
+
+
+			(w, h) <- SDL.TTF.utf8Size (fonts ! "stats") "00"
+			deaths <- SDL.TTF.renderUTF8Blended (fonts ! "stats") (show $ deaths player) (SDL.Color 0xaa 0 0)
+			SDL.blitSurface deaths Nothing win (jRect (x+64+5) (y + ((64+4) `div` 2) - (h `div` 2)) 0 0)
+		) (zip [0..] sortedPlayers)
+	SDL.flip win
+	pause
+	where
+	sortedPlayers = sortBy (comparing deaths) players
+	pause = do
+		e <- SDL.waitEvent
+		case e of
+			SDL.KeyDown _ -> return ()
+			SDL.Quit -> return ()
+			_ -> pause
 
 gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace players projectiles items = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
@@ -463,8 +490,7 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 	case e of
 		SDL.User SDL.UID0 _ _ _
 			| timeLimit - (toInteger $ ticks - startTicks) < 1000 ->
-				-- Game over
-				return ()
+				winScreen win fonts players
 			| otherwise -> do
 				projectiles' <- doProjectiles ticks
 				(players', newProjectiles) <- doAbilities players ticks
