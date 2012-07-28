@@ -14,6 +14,6 @@ foreign import ccall unsafe "aacircleRGBA" gfxAACircleRGBA ::
 	IO CInt
 
 aaCircle :: SDL.Surface -> Int16 -> Int16 -> Int16 -> SDL.Color -> IO Bool
-aaCircle surface x y rad (SDL.Color r g b) = withForeignPtr surface $ (\ptr ->
+aaCircle surface x y rad (SDL.Color r g b) = withForeignPtr surface (\ptr ->
 		intToBool (-1) (fmap fromCInt $ gfxAACircleRGBA ptr x y rad r g b 0xff)
 	)

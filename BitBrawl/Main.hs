@@ -147,7 +147,7 @@ class Drawable a where
 
 instance Drawable Player where
 	position player = do
-		(x', y') <- floorVector `fmap` (get $ H.position $ H.body $ shape player)
+		(x', y') <- floorVector `fmap` get (H.position $ H.body $ shape player)
 		return (x' - 32, (-1 * y') - 54)
 
 	draw win player (x,y) = do
@@ -172,10 +172,10 @@ instance Drawable Player where
 		playerWrapAni $ player {animation = (ani, aniTicks)}
 		where
 		playerAniRate (Player {ability = (Nothing, _)}) = 10
-		playerAniRate (Player {ability = (Just (DoingAbility {ended = Nothing, dability = abi}), _), animation = (Animation {frames = fs}, _)}) = case (chargeLen abi) `div` (fromIntegral fs) of
+		playerAniRate (Player {ability = (Just (DoingAbility {ended = Nothing, dability = abi}), _), animation = (Animation {frames = fs}, _)}) = case chargeLen abi `div` fromIntegral fs of
 			0 -> 1
 			r -> 1000 `div` r
-		playerAniRate (Player {ability = (Just (DoingAbility {ended = (Just _), dability = abi}), _), animation = (Animation {frames = fs}, _)}) = case (releaseLen abi) `div` (fromIntegral fs) of
+		playerAniRate (Player {ability = (Just (DoingAbility {ended = (Just _), dability = abi}), _), animation = (Animation {frames = fs}, _)}) = case releaseLen abi `div` fromIntegral fs of
 			0 -> 1
 			r -> 1000 `div` r
 		playerWrapAni p@(Player {ability = (Nothing, _)}) = p {animation = first wrapAnimation (animation p)}
@@ -183,17 +183,14 @@ instance Drawable Player where
 
 instance Drawable Projectile where
 	position projectile = do
-		(x', y') <- floorVector `fmap` (get $ H.position $ H.body $ pshape projectile)
-		(vx, vy) <- floorVector `fmap` (get $ H.velocity $ H.body $ pshape projectile)
-		let x = if vx > 1 then
-				x' - 64
-			else if vy < -1 || vy > 1 then
-				x' - 32
-			else
-				x'
+		(x', y') <- floorVector `fmap` get (H.position $ H.body $ pshape projectile)
+		(vx, vy) <- floorVector `fmap` get (H.velocity $ H.body $ pshape projectile)
+		let x | vx > 1 = x' - 64
+		      | vy < -1 || vy > 1 = x' - 32
+		      | otherwise = x'
 		return (x, (-1 * y') - 54)
 
-	draw win (Projectile {pplayer = p, pani = Just (ani,_,_)}) (x,y) = do
+	draw win (Projectile {pplayer = p, pani = Just (ani,_,_)}) (x,y) =
 		drawAnimation win (sprites p) ani (x,y)
 	draw _ _ _ = return ()
 
@@ -208,7 +205,7 @@ instance Drawable Projectile where
 
 instance Drawable Item where
 	position item = do
-		(x', y') <- floorVector `fmap` (get $ H.position $ H.body $ itemShape item)
+		(x', y') <- floorVector `fmap` get (H.position $ H.body $ itemShape item)
 		return (x' - 32, (-1 * y') - 32)
 
 	draw win (Energy {itemAnimation = (sprites, animation, _)}) (x,y) =
@@ -286,7 +283,7 @@ generateGrass :: SDL.Surface -> IO SDL.Surface
 generateGrass sprites = do
 	surface <- SDL.createRGBSurface [SDL.HWSurface, SDL.AnyFormat] windowWidth windowHeight 16 0 0 0 0
 	mapM_ (\y ->
-			mapM_ (\x -> do
+			mapM_ (\x ->
 				SDL.blitSurface sprites (jRect 32 rowy width 32) surface (jRect x y 0 0)
 			) [0, width .. windowWidth]
 		) [0, 32 .. windowHeight]
@@ -317,7 +314,7 @@ selectAnimation (Player {
 		SimpleAnimation {} -> sAni k d
 		AbilityAnimation {} -> aAni k d
 	sAni = simpleAni anis
-	aAni k d = let AbilityAnimation _ a = (anis ! k) in a ! (doingAbilityState $ fromJust abi) ! d
+	aAni k d = let AbilityAnimation _ a = (anis ! k) in a ! doingAbilityState (fromJust abi) ! d
 
 updateAnimation :: Ticks -> Player -> Player
 updateAnimation ticks p = p {animation = second (const ticks) $ first (const $ selectAnimation p) (animation p)}
@@ -353,10 +350,10 @@ maybeEliminate :: Player -> IO (Bool, Player)
 maybeEliminate player = do
 	x <- getStdRandom (randomR (0,99))
 	-- When x < change, player in eliminated, respawn
-	if (x < chance) then do
+	if x < chance then do
 			newPos <- randomLocation
-			(H.position $ H.body $ shape player) $= newPos
-			return (True, player {damageAmt = 0, energy = 50, deaths = (deaths player) + 1, ability  = (Nothing,Nothing)})
+			H.position (H.body $ shape player) $= newPos
+			return (True, player {damageAmt = 0, energy = 50, deaths = deaths player + 1, ability  = (Nothing,Nothing)})
 		else
 			return (False, player)
 	where
@@ -397,7 +394,7 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 	ticks <- SDL.getTicks
 	case e of
 		SDL.User SDL.UID0 _ _ _
-			| timeLimit - (toInteger $ ticks - startTicks) < 1000 ->
+			| timeLimit - toInteger (ticks - startTicks) < 1000 ->
 				winScreen win fonts players
 			| otherwise -> do
 				projectiles' <- doProjectiles ticks
@@ -428,7 +425,7 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 						return items''
 
 				let winner' = minimumBy (comparing deaths) players
-				unless (winner == (control winner')) (switchMusic (music winner'))
+				unless (winner == control winner') (switchMusic (music winner'))
 
 				next (control winner') gameSpace' players''' projectiles'''' items'''
 
@@ -445,7 +442,7 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 	handleAction ticks (Face d) p = updateAnimation ticks $ p {direction = d}
 	handleAction ticks (Go s) p = updateAnimation ticks $ p {speed = s}
 	handleAction ticks EndAbility p =
-		let time = (\x -> x {ended = Just ticks}) in
+		let time x = x {ended = Just ticks} in
 		case ability p of
 			(Nothing, _) -> p -- No change, this can happen if action is cancelled
 			(Just (DoingAbility {ended = Nothing}), _) ->
@@ -503,7 +500,7 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 
 	unsetOneAxis d a =
 		let d' = filter (/=a) (splitDirection d) in
-		if d' == (splitDirection d) then
+		if d' == splitDirection d then
 			-- Unchanged, keep direction
 			[d]
 		else
@@ -525,30 +522,30 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 					return p
 		) projectiles
 	doAbility ticks p@(Player {ability = (Just (DoingAbility _ a s (Just e)), nextAbility)})
-		| ((toInteger ticks) - (toInteger e)) >= toInteger (releaseLen a) = do
-			let len = fromIntegral $ (toInteger e) - (toInteger s)
-			let ratio = (if len < 1 then (1::Double) else len) / (fromIntegral $ chargeLen a)
-			let duration = floor $ minimum [fromIntegral $ maxDuration a, (fromIntegral $ maxDuration a) * ratio]
-			let cost = floor $ minimum [fromIntegral $ energyCost a, (fromIntegral $ energyCost a) * ratio]
+		| (toInteger ticks - toInteger e) >= toInteger (releaseLen a) = do
+			let len = fromIntegral $ toInteger e - toInteger s
+			let ratio = (if len < 1 then (1::Double) else len) / fromIntegral (chargeLen a)
+			let duration = floor $ minimum [fromIntegral $ maxDuration a, fromIntegral (maxDuration a) * ratio]
+			let cost = floor $ minimum [fromIntegral $ energyCost a, fromIntegral (energyCost a) * ratio]
 
 			let nextAbility' = (\a ->
 					a {
 						started = ticks,
-						ended = (\e -> ticks + (e - (started a))) `fmap` ended a
+						ended = (\e -> ticks + (e - started a)) `fmap` ended a
 					}
 				) `fmap` nextAbility
 
-			let p' = updateAnimation ticks $ p {energy = maximum [0, (energy p) - cost], ability = (nextAbility', Nothing) }
+			let p' = updateAnimation ticks $ p {energy = maximum [0, energy p - cost], ability = (nextAbility', Nothing) }
 
 			when (isJust $ sound a) $ do
-				let s = sounds ! (fromJust $ sound a)
+				let s = sounds ! fromJust (sound a)
 				_ <- SDL.Mixer.playChannel (-1) s 0
 				return ()
 
 			case a of
 				(Attack {}) -> do
-					let damage = floor $ minimum [fromIntegral $ maxDamage a, (fromIntegral $ maxDamage a) * ratio]
-					let knock  = floor $ minimum [fromIntegral $ maxKnockback a, (fromIntegral $ maxKnockback a) * ratio]
+					let damage = floor $ minimum [fromIntegral $ maxDamage a, fromIntegral (maxDamage a) * ratio]
+					let knock  = floor $ minimum [fromIntegral $ maxKnockback a, fromIntegral (maxKnockback a) * ratio]
 
 					let d = H.fromAngle (directionToRadians $ direction p)
 					let u = H.Vector 16 0 `H.rotate` d
@@ -556,12 +553,12 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 
 					body <- H.newBody H.infinity H.infinity
 					shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
-					let newProjectile = Projectile (fmap (\(as,r) -> (as!(direction p),r,ticks)) (projectileAnis a)) damage knock shp (duration + ticks) p Nothing
+					let newProjectile = Projectile (fmap (\(as,r) -> (as ! direction p,r,ticks)) (projectileAnis a)) damage knock shp (duration + ticks) p Nothing
 
 					H.position body $= physicsPos + u
 					H.velocity body $= H.scale u 4
 
-					(($=) (H.group shp)) =<< get (H.group $ shape p)
+					($=) (H.group shp) =<< get (H.group $ shape p)
 					H.collisionType shp $= collisionType newProjectile
 
 					let (Space s _ _) = gameSpace
@@ -588,14 +585,14 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 					(plshp, prshp) <- H.shapes
 
 					liftIO (do
-						let get' = (\f x -> fmap f (get x))
+						let get' f = fmap f . get
 						[pl] <- filterM (get' ((==plshp) . shape)) mutablePlayers
 						pr <- filterM (get' ((==prshp) . pshape)) =<< filterM (get' (isNothing . deathPos)) mutableProjectiles
 						case pr of
 							[pr] -> do
 								-- Projectile has hit so player is damaged
 								projectile <- get pr
-								pl $~ (\player -> player {damageAmt = (damageAmt player) + (damage projectile)})
+								pl $~ (\player -> player {damageAmt = damageAmt player + damage projectile})
 								(elim, player) <- maybeEliminate =<< get pl
 								if elim then
 										pl $= player
@@ -603,9 +600,9 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 										v <- get $ H.velocity $ H.body $ pshape projectile
 										case fromIntegral $ knockback projectile of
 											0     ->
-												pl $= (updateAnimation ticks $ player { speed = 0, ability = (Nothing, Nothing) })
+												pl $= updateAnimation ticks (player { speed = 0, ability = (Nothing, Nothing) })
 											knock ->
-												pl $= (updateAnimation ticks $ player { speed = 0, ability = (Just $ knockedBack ticks (H.scale (H.normalize v) knock), Nothing) })
+												pl $= updateAnimation ticks (player { speed = 0, ability = (Just $ knockedBack ticks (H.scale (H.normalize v) knock), Nothing) })
 
 								-- Projectile has hit, so it is gone
 								pos <- get $ H.position $ H.body $ pshape projectile
@@ -626,14 +623,14 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 					(plshp, itshp) <- H.shapes
 
 					liftIO (do
-						let get' = (\f x -> fmap f (get x))
+						let get' f = fmap f . get
 						[pl] <- filterM (get' ((==plshp) . shape)) mutablePlayers
 						it <- filterM (get' ((==itshp) . itemShape . fromJust)) =<< filterM (get' isJust) mutableItems
 
 						case it of
 							[it] -> do
 								Just item <- get it
-								pl $~ (\player -> player {energy = (energy player) + (energyBonus item)})
+								pl $~ (\player -> player {energy = energy player + energyBonus item})
 								it $= Nothing
 							_ -> return ()
 
@@ -646,13 +643,13 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 			)
 
 		let time = (ticks - spaceTicks) + dtRemainder
-		(time `div` frameTime) `timesLoop` (H.step hSpace (frameTime/1000))
+		(time `div` frameTime) `timesLoop` H.step hSpace (frameTime/1000)
 
 		players' <- mapM get mutablePlayers
 		projectiles' <- mapM get mutableProjectiles
 		items' <- catMaybes `fmap` mapM get mutableItems
 
-		return $ (Space hSpace ticks (time `mod` frameTime), players', projectiles', items')
+		return (Space hSpace ticks (time `mod` frameTime), players', projectiles', items')
 	advanceAndDrawByZ ds ticks = do
 		let ds' = map (`advance` ticks) ds
 		drawByZ win ds'
@@ -682,7 +679,7 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 
 		let minutes = (timeLimit - (ticks - startTicks)) `div` (1000*60)
 		let seconds = ((timeLimit - (ticks - startTicks)) `div` 1000) - (minutes*60)
-		let clockS = (zeroPad 2 $ show minutes) ++ ":" ++ (zeroPad 2 $ show seconds)
+		let clockS = zeroPad 2 (show minutes) ++ ":" ++ zeroPad 2 (show seconds)
 		(w, _) <- SDL.TTF.utf8Size (fonts ! "stats") clockS
 		clock <- SDL.TTF.renderUTF8Blended (fonts ! "stats") clockS (SDL.Color 0xff 0xff 0xff)
 		let centre = (windowWidth `div` 2) - (w `div` 2)
@@ -744,7 +741,7 @@ player_parser = do
 	endOfLine
 	music <- takeWhile1 (not.isEndOfLine)
 	endOfLine
-	anis <- (fmap Map.fromList $ many animation_set) <* skipSpace <* endOfInput
+	anis <- fmap Map.fromList (many animation_set) <* skipSpace <* endOfInput
 	return (T.unpack name, T.unpack music, anis)
 	where
 	animation_set = do
@@ -756,7 +753,7 @@ player_parser = do
 				Nothing -> fmap SimpleAnimation directed_animations
 				Just a -> skipSpace >> sub_attacks a
 			)
-		return $ (T.unpack key, aniSet)
+		return (T.unpack key, aniSet)
 	ability = do
 		constStr "attack"
 		maxDamage <- ws_int
@@ -801,12 +798,12 @@ player_parser = do
 		constStr "projectile"
 		duration <- ws_int
 		rate <- ws_int
-		anis <- braces $ directed_animations
+		anis <- braces directed_animations
 		return (duration, rate, anis)
 	sub_attack s state = do
 		constStr s
 		duration <- ws_int
-		anis <- braces $ directed_animations
+		anis <- braces directed_animations
 		return (duration, (state, anis))
 	directed_animations = fmap Map.fromList $ many (skipSpace >> directed_animation)
 	directed_animation = do
@@ -824,7 +821,7 @@ player_parser = do
 		_ <- char '}'
 		skipSpace
 		return v
-	constStr s = (string $ T.pack s) >> return ()
+	constStr s = void $ string $ T.pack s
 	readOne = fmap (read . T.unpack) . choice . map (string . T.pack)
 	ws_int :: (Integral a) => Parser a
 	ws_int = skipSpace *> decimal
@@ -884,8 +881,8 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 			SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) -> do
 				let (existing, controls') = foldr (\(p,c) (done, xs) ->
 						case getKeyAction c keysym of
-							(Just (KFace E)) -> (IgnoreControl, ((p+1) `mod` (length pcs),c):xs)
-							(Just (KFace W)) -> (IgnoreControl, ((p+(length pcs)-1) `mod` (length pcs),c):xs)
+							(Just (KFace E)) -> (IgnoreControl, ((p+1) `mod` length pcs,c):xs)
+							(Just (KFace W)) -> (IgnoreControl, ((p + length pcs - 1) `mod` length pcs,c):xs)
 							(Just KStart) -> (STARTControl, (p,c):xs)
 							(Just _) -> (IgnoreControl, (p,c):xs)
 							_ -> (done, (p,c):xs)
@@ -893,9 +890,9 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 				case existing of
 					AddControl -> loop (Just keysym) 0 aLeft controls'
 					IgnoreControl -> loop Nothing 0 aLeft controls'
-					STARTControl -> startGame menuMusic win fonts sounds grass (tail $ map (\(p,c) -> (pcs!!p,c)) controls)
+					STARTControl -> startGame menuMusic win fonts sounds grass (tail $ map (first (pcs!!)) controls)
 			SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
-				loop (if (Just keysym) == keyDown then Nothing else keyDown) 0 aLeft controls
+				loop (if Just keysym == keyDown then Nothing else keyDown) 0 aLeft controls
 			SDL.Quit -> return ()
 			_ -> loop keyDown downFor aLeft controls
 	barWidth downFor = minimum [windowWidth-20, ((windowWidth-20) * downFor) `div` 10]
@@ -906,7 +903,7 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 		return ()
 	centre w = (windowWidth `div` 2) - (w `div` 2)
 	drawActionLabel pnum a = do
-		let s = "Hold down " ++ (kActionString a) ++ " for Player " ++ (show pnum)
+		let s = "Hold down " ++ kActionString a ++ " for Player " ++ show pnum
 		(w, h) <- SDL.TTF.utf8Size menuFont s
 		drawText (centre w) 10 menuFont s (SDL.Color 0xff 0xff 0xff)
 		return h
@@ -916,7 +913,7 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 		drawText (centre w) (windowHeight-(h*2)) menuFont s (SDL.Color 0xff 0xff 0xff)
 	drawLabelAndPlayers a controls = do
 		drawStartMsg
-		labelH <- drawActionLabel ((length controls)+1) a
+		labelH <- drawActionLabel (length controls + 1) a
 		mapM_ (\(i,(p,_)) -> do
 				let (name, anis, sprites, _) = pcs !! p
 				let x = 10+(i*74)

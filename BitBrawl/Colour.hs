@@ -10,7 +10,7 @@ srgb2colour :: (Floating a, Ord a) => RGB a -> Colour a
 srgb2colour = Colour.uncurryRGB (Colour.rgbUsingSpace Colour.sRGBSpace)
 
 colour2sdl :: (Floating a, RealFrac a) => Colour a -> SDL.Color
-colour2sdl = (Colour.uncurryRGB SDL.Color) . Colour.toSRGB24
+colour2sdl = Colour.uncurryRGB SDL.Color . Colour.toSRGB24
 
 hsv2sdl :: (RealFrac a, Ord a, Floating a) => a -> a -> a -> SDL.Color
 hsv2sdl h s v = colour2sdl $ srgb2colour $ Colour.hsv h s v

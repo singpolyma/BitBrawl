@@ -20,10 +20,10 @@ drawAnimation win sprites animation (x,y) = do
 advanceAnimation :: (Animation,Ticks) -> Ticks -> Ticks -> (Animation,Ticks)
 advanceAnimation (ani, now) frameRate ticks
 	| frames ani < 2 = (ani, ticks)
-	| frame' == (frame ani) = (ani, now)
+	| frame' == frame ani = (ani, now)
 	| otherwise = (ani { frame = frame' }, ticks)
 	where
-	frame' = fromIntegral $ (currentFrame + steps)
+	frame' = fromIntegral (currentFrame + steps)
 	currentFrame = fromIntegral $ frame ani
 	steps = time `div` (1000 `div` frameRate)
 	time = ticks - now
@@ -43,4 +43,4 @@ truncAnimation a@(Animation {frame = f, frames = fs, col = c})
 	maxCol = c + fs
 
 clipAnimation :: Animation -> Maybe SDL.Rect
-clipAnimation ani = jRect (64*(frame ani)) (64*(row ani)) 64 64
+clipAnimation ani = jRect (64 * frame ani) (64 * row ani) 64 64

@@ -9,12 +9,12 @@ all: report.html doc dist/build/bitbrawl/bitbrawl dist/bitbrawl-$(VERSION).tar.g
 install: dist/build/bitbrawl/bitbrawl
 	cabal install
 
-report.html: bitbrawl.hs
-	-hlint $(HLINTFLAGS) --report .
+report.html: BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs
+	-hlint $(HLINTFLAGS) --report BitBrawl
 
 doc: dist/doc/html/bitbrawl/index.html README
 
-dist/doc/html/bitbrawl/index.html: dist/setup-config bitbrawl.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs
+dist/doc/html/bitbrawl/index.html: dist/setup-config BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs
 	cabal haddock --hyperlink-source
 
 dist/setup-config: bitbrawl.cabal
@@ -24,9 +24,9 @@ clean:
 	find -name '*.o' -o -name '*.hi' | xargs $(RM)
 	$(RM) -r dist dist-ghc
 
-dist/build/bitbrawl/bitbrawl: bitbrawl.cabal dist/setup-config bitbrawl.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs
+dist/build/bitbrawl/bitbrawl: bitbrawl.cabal dist/setup-config BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs
 	cabal build --ghc-options="$(GHCFLAGS)"
 
-dist/bitbrawl-$(VERSION).tar.gz: bitbrawl.cabal dist/setup-config README bitbrawl.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs
+dist/bitbrawl-$(VERSION).tar.gz: bitbrawl.cabal dist/setup-config README BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs
 	cabal check
 	cabal sdist

@@ -20,7 +20,7 @@ extra-source-files:
         README
 
 executable bitbrawl
-        main-is: bitbrawl.hs
+        main-is: BitBrawl/Main.hs
 
         build-depends:
                 base == 4.*,

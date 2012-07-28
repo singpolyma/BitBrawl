@@ -1,7 +1,7 @@
 module BitBrawl.Util where
 
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Monad (filterM)
+import Control.Monad (filterM, void)
 import Data.Maybe (fromMaybe)
 import Data.Word (Word32)
 import Graphics.UI.SDL.Keysym (SDLKey)
@@ -28,7 +28,7 @@ getDataDirs :: IO [FilePath]
 getDataDirs = do
 	home <- getHomeDirectory
 	home_data <- fmap (fromMaybe (home_data_default home)) $ maybeGetEnv "XDG_DATA_HOME"
-	data_dirs <- fmap (fromMaybe data_default) $ fmap (fmap splitSearchPath) $ maybeGetEnv "XDG_DATA_DIRS"
+	data_dirs <- maybe data_default splitSearchPath `fmap` maybeGetEnv "XDG_DATA_DIRS"
 	filterM doesDirectoryExist (home_data:data_dirs)
 	where
 	data_default = ["usr" </> "local" </> "share", "usr" </> "share"]
@@ -44,14 +44,14 @@ jRect :: Int -> Int -> Int -> Int -> Maybe SDL.Rect
 jRect x y w h = Just $ SDL.Rect x y w h
 
 zeroPad :: Int -> String -> String
-zeroPad n s = (replicate (n-(length s)) '0') ++ s
+zeroPad n s = replicate (n - length s) '0' ++ s
 
 timesLoop :: (Integral a, Monad m) => a -> m a1 -> m ()
 timesLoop 0 _ = return ()
 timesLoop n f = f >> (n-1) `timesLoop` f
 
 forkIO_ :: IO a -> IO ()
-forkIO_ f = (forkIO (f >> return ())) >> return ()
+forkIO_ f = void $ forkIO $ void f
 
 timer :: Int -> IO a -> IO ()
 timer t f = do
