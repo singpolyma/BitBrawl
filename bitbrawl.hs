@@ -220,11 +220,7 @@ instance Drawable Projectile where
 				x' - 32
 			else
 				x'
-		let y = if vy < -1 then
-				y' + (64*2)
-			else
-				y'
-		return (x, (-1 * y') - 64)
+		return (x, (-1 * y') - 54)
 
 	draw win (Projectile {pplayer = p, pani = Just (ani,_,_)}) (x,y) = do
 		drawAnimation win (sprites p) ani (x,y)
