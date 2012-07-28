@@ -1,14 +1,29 @@
-This code is pretty hacky right now.  I don't have a Makefile yet (run with runhaskell), and it will throw all sorts of warnings.  I'm sort of prototyping as I go, but it works so far.
+== Build Instructions ==
 
-Dependencies:
+These instructions have been tested on Ubuntu 12.04, and are not guarenteed on any other platform.
 
-libghc-random-dev
-libghc-colour-dev
-libghc-sdl-dev
-libghc-sdl-ttf-dev
-libghc-sdl-image-dev
-libghc-sdl-gfx-dev
-libghc-attoparsec-dev >= 0.10.0.0
-libghc-hipmunk-dev >= 5.2.0.9
+I am using cabal for all Haskell dependencies because some dependencies need to be newer that what is in Ubuntu.  Hopefully, this will change.
 
-(also installable from cabal)
+=== Install GHC and Cabal ===
+
+	sudo apt-get install sudo apt-get install ghc cabal-install
+
+=== Install non-Haskell Dependencies ===
+
+	sudo apt-get install libsdl1.2-dev libsdl-image1.2-dev libsdl-mixer1.2-dev libsdl-gfx1.2-dev libsdl-ttf2.0-dev 
+
+=== Install Haskell Dependencies ===
+
+	cabal update
+	cabal install containers SDL SDL-image SDL-ttf SDL-mixer Hipmunk text attoparsec colour StateVar directory filepath random transformers
+
+
+=== Build BitBrawl ===
+
+	make
+
+=== Done ===
+
+There should now be a binary at dist/build/bitbrawl/bitbrawl that you can run to run the game.
+
+NOTE: there is a make install rule in this Makefile, however **it is not verified to work**.
