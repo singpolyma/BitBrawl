@@ -15,7 +15,7 @@ report.html: BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Anima
 doc: dist/doc/html/bitbrawl/index.html README
 
 dist/doc/html/bitbrawl/index.html: dist/setup-config BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs
-	cabal haddock --hyperlink-source --executables
+	-cabal haddock --hyperlink-source --executables
 
 dist/setup-config: bitbrawl.cabal
 	cabal configure
