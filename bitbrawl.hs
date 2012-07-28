@@ -1,30 +1,21 @@
-{-# LANGUAGE ForeignFunctionInterface #-}
+module Main where
 
 import Control.Monad
 import Control.Arrow
 import Control.Applicative
 import Control.Monad.IO.Class
-import Control.Concurrent (forkIO, threadDelay)
---import Foreign (new, peek, free, nullPtr, castPtr)
+import Foreign (nullPtr, touchForeignPtr)
 import Data.Ord
 import Data.Char hiding (Space)
 import Data.List
 import Data.Maybe
-import Data.Word
 import Data.IORef
 import System.Random
 import System.FilePath
 import System.Directory
-import System.Environment (getEnv)
 import Data.StateVar
 import Data.Attoparsec.Text
 
-import Data.Colour.RGBSpace (Colour, RGB)
-import qualified Data.Colour.RGBSpace as Colour
-import qualified Data.Colour.SRGB as Colour
-import qualified Data.Colour.RGBSpace.HSV as Colour
-
-import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 
@@ -38,15 +29,11 @@ import qualified Graphics.UI.SDL.TTF as SDL.TTF
 import qualified Graphics.UI.SDL.Mixer as SDL.Mixer
 import qualified Physics.Hipmunk as H
 
---import qualified Graphics.UI.SDL.Primitives as SDL
--- For binding to SDL_gfx ourselves
-import Foreign
-import Foreign.C
-import Foreign.Ptr
-import Graphics.UI.SDL.Utilities (intToBool, fromCInt)
+import BitBrawl.Animation
+import BitBrawl.Colour
+import BitBrawl.SDLgfx
+import BitBrawl.Util
 
-type Ticks = Word32
-type Speed = H.CpFloat
 type DirectedAnimations = Map Direction Animation
 type Animations = Map String AnimationSet
 
@@ -106,14 +93,6 @@ data DoingAbility = DoingAbility {
 	}
 	deriving (Show, Eq)
 
-data Animation = Animation {
-		row    :: Int,
-		frames :: Int,
-		frame  :: Int,
-		col    :: Int
-	}
-	deriving (Show, Read, Eq)
-
 data Player = Player {
 		color      :: SDL.Color,
 		sprites    :: SDL.Surface,
@@ -136,13 +115,12 @@ data KeyboardAction = KFace Direction | KAbility1 | KAbility2 | KStart deriving 
 
 data Action = Face Direction | Go Speed | Ability String | EndAbility deriving (Show, Read, Eq)
 
+data ExistingControl = IgnoreControl | AddControl | STARTControl
+
 data KeyState = KeyDown | KeyUp deriving (Show, Read, Enum, Ord, Eq)
 data Control = KeyboardControl [(SDLKey, KeyboardAction)] deriving (Show, Eq)
 
 data Space = Space H.Space Ticks Ticks
-
-instance Eq SDL.Color where
-	(SDL.Color r1 g1 b1) == (SDL.Color r2 g2 b2) = (r1,g2,b1) == (r2,g2,b2)
 
 class CollisionType a where
 	collisionType :: a -> H.CollisionType
@@ -167,23 +145,13 @@ class Drawable a where
 		positions <- mapM position ds
 		mapM_ (uncurry (draw win)) (sortBy (comparing (snd.snd)) (zip ds positions))
 
-foreign import ccall unsafe "aacircleRGBA" gfxAACircleRGBA ::
-	Ptr SDL.SurfaceStruct ->
-	Int16 -> Int16 -> Int16 ->
-	Word8 -> Word8 -> Word8 -> Word8 ->
-	IO CInt
-
-aaCircle :: SDL.Surface -> Int16 -> Int16 -> Int16 -> SDL.Color -> IO Bool
-aaCircle surface x y rad (SDL.Color r g b) = withForeignPtr surface $ \ptr ->
-                                   intToBool (-1) (fmap fromCInt $ gfxAACircleRGBA ptr x y rad r g b 0xff)
-
 instance Drawable Player where
 	position player = do
 		(x', y') <- floorVector `fmap` (get $ H.position $ H.body $ shape player)
 		return (x' - 32, (-1 * y') - 54)
 
 	draw win player (x,y) = do
-		aaCircle win (fromIntegral $ x+32) (fromIntegral $ y+54) 16 (color player)
+		True <- aaCircle win (fromIntegral $ x+32) (fromIntegral $ y+54) 16 (color player)
 		drawAnimation win (sprites player) (fst $ animation player) (x,y)
 
 		red <- color2pixel win $ SDL.Color 0xff 0 0
@@ -196,7 +164,8 @@ instance Drawable Player where
 		where
 		drawBar value color y' = do
 			let bar = ((64-32) * value) `div` 100
-			SDL.fillRect win (jRect (x+16) (y-y') bar 5) color
+			True <- SDL.fillRect win (jRect (x+16) (y-y') bar 5) color
+			return ()
 
 	advance player ticks =
 		let (ani,aniTicks) = advanceAnimation (animation player) (playerAniRate player) ticks in
@@ -256,7 +225,7 @@ frameRate :: (Num a) => a
 frameRate = 30
 
 frameTime :: (Num a) => a
-frameTime = fromIntegral (1000 `div` frameRate)
+frameTime = fromIntegral ((1000 :: Int) `div` frameRate)
 
 playerSpeed :: (Num a) => a
 playerSpeed = 75
@@ -273,23 +242,6 @@ windowWidth = 800
 windowHeight :: (Num a) => a
 windowHeight = 600
 
-maybeGetEnv :: String -> IO (Maybe String)
-maybeGetEnv k = do
-	v <- fmap Just (getEnv k) `catch` const (return Nothing)
-	case v of
-		(Just "") -> return Nothing
-		_ -> return v
-
-getDataDirs :: IO [FilePath]
-getDataDirs = do
-	home <- getHomeDirectory
-	home_data <- fmap (fromMaybe (home_data_default home)) $ maybeGetEnv "XDG_DATA_HOME"
-	data_dirs <- fmap (fromMaybe data_default) $ fmap (fmap splitSearchPath) $ maybeGetEnv "XDG_DATA_DIRS"
-	filterM doesDirectoryExist (home_data:data_dirs)
-	where
-	data_default = ["usr" </> "local" </> "share", "usr" </> "share"]
-	home_data_default home = home </> ".local" </> "share"
-
 getProgramDataDirs :: IO [FilePath]
 getProgramDataDirs = do
 	pwd <- getCurrentDirectory
@@ -304,30 +256,12 @@ findDataFiles f = do
 	where
 	dirContents x = mapM (canonicalizePath  . normalise . (x </>)) =<< getDirectoryContents x
 
-srgb2colour :: (Floating a, Ord a) => RGB a -> Colour a
-srgb2colour = Colour.uncurryRGB (Colour.rgbUsingSpace Colour.sRGBSpace)
-
-colour2sdl :: (Floating a, RealFrac a) => Colour a -> SDL.Color
-colour2sdl = (Colour.uncurryRGB SDL.Color) . Colour.toSRGB24
-
-hsv2sdl :: (RealFrac a, Ord a, Floating a) => a -> a -> a -> SDL.Color
-hsv2sdl h s v = colour2sdl $ srgb2colour $ Colour.hsv h s v
-
-color2pixel :: SDL.Surface -> SDL.Color -> IO SDL.Pixel
-color2pixel win (SDL.Color r g b) = SDL.mapRGB (SDL.surfaceGetPixelFormat win) r g b
-
-timer :: Int -> IO a -> IO ()
-timer t f = do
-	_ <- f
-	threadDelay (t*1000) -- Make it milliseconds
-	timer t f
-
-jRect x y w h = Just $ SDL.Rect x y w h
-
+switchMusic :: SDL.Mixer.Music -> IO ()
 switchMusic music = do
 	_ <- SDL.Mixer.tryFadeOutMusic 1000
 	SDL.Mixer.fadeInMusic music (-1) 1000
 
+splitDirection :: Direction -> [Direction]
 splitDirection  E = [E]
 splitDirection NE = [N,E]
 splitDirection  N = [N]
@@ -337,53 +271,15 @@ splitDirection SW = [S,W]
 splitDirection  S = [S]
 splitDirection SE = [S,E]
 
-timesLoop 0 _ = return ()
-timesLoop n f = f >> (n-1) `timesLoop` f
-
-advanceAnimation :: (Animation,Ticks) -> Ticks -> Ticks -> (Animation,Ticks)
-advanceAnimation (ani, now) frameRate ticks
-	| frames ani < 2 = (ani, ticks)
-	| frame' == (frame ani) = (ani, now)
-	| otherwise = (ani { frame = frame' }, ticks)
-	where
-	frame' = fromIntegral $ (currentFrame + steps)
-	currentFrame = fromIntegral $ frame ani
-	countFrames = fromIntegral $ frames ani
-	steps = time `div` (1000 `div` frameRate)
-	time = ticks - now
-
-wrapAnimation :: Animation -> Animation
-wrapAnimation a@(Animation {frame = f, frames = fs, col = c})
-	| f >= maxCol = wrapAnimation $ a {frame = maxCol - f}
-	| otherwise = a
-	where
-	maxCol = c + fs
-
-truncAnimation :: Animation -> Animation
-truncAnimation a@(Animation {frame = f, frames = fs, col = c})
-	| f >= maxCol = a {frame = maxCol - 1}
-	| otherwise = a
-	where
-	maxCol = c + fs
-
-drawAnimation :: SDL.Surface -> SDL.Surface -> Animation -> (Int,Int) -> IO ()
-drawAnimation win sprites animation (x,y) = do
-	let box = jRect x y 64 64
-	SDL.blitSurface sprites (clipAnimation animation) win box
-	return ()
-
+knockedBack :: Ticks -> H.Vector -> DoingAbility
 knockedBack now v = DoingAbility "fall" (Block Nothing 0 1 400 0 v Nothing) now (Just now)
-
-floorVector :: H.Vector -> (Int, Int)
-floorVector (H.Vector x y) = (floor x, floor y)
 
 directionToRadians :: Direction -> H.Angle
 directionToRadians d = (factor * pi) / 4
 	where
 	factor = fromIntegral $ fromEnum d
 
-clipAnimation ani = jRect (64*(frame ani)) (64*(row ani)) 64 64
-
+getKeyAction :: Control -> SDLKey -> Maybe KeyboardAction
 getKeyAction (KeyboardControl c) keysym = lookup keysym c
 
 generateGrass :: SDL.Surface -> IO SDL.Surface
@@ -399,12 +295,15 @@ generateGrass sprites = do
 	width = 2 * 32
 	rowy = 5 * 32
 
+doingAbilityState :: DoingAbility -> AbilityState
 doingAbilityState (DoingAbility {ended = Nothing}) = AbilityCharge
 doingAbilityState (DoingAbility {ended = Just _}) = AbilityRelease
 
+simpleAni :: Map String AnimationSet -> String -> Direction -> Animation
 simpleAni anis k d = let SimpleAnimation a = (anis ! k) in a ! d
 
-selectAnimation p@(Player {
+selectAnimation :: Player -> Animation
+selectAnimation (Player {
 			ability = (abi, _),
 			direction = d,
 			animations = anis,
@@ -420,16 +319,20 @@ selectAnimation p@(Player {
 	sAni = simpleAni anis
 	aAni k d = let AbilityAnimation _ a = (anis ! k) in a ! (doingAbilityState $ fromJust abi) ! d
 
+updateAnimation :: Ticks -> Player -> Player
 updateAnimation ticks p = p {animation = second (const ticks) $ first (const $ selectAnimation p) (animation p)}
 
+isEnergy :: Item -> Bool
 isEnergy (Energy {}) = True
 --isEnergy _ = False
 
+randomLocation :: IO H.Vector
 randomLocation = do
 	x <- getStdRandom (randomR (32,windowWidth-32))
 	y <- getStdRandom (randomR (-64,-windowHeight))
 	return (H.Vector x y)
 
+deathChance :: Int -> Int -> Int
 deathChance d e
 	| (e `div` 25) < 1 = 100
 	| d < 50 = 0
@@ -446,6 +349,7 @@ deathChance d e
 	where
 	doE p = p `div` (e `div` 25)
 
+maybeEliminate :: Player -> IO (Bool, Player)
 maybeEliminate player = do
 	x <- getStdRandom (randomR (0,99))
 	-- When x < change, player in eliminated, respawn
@@ -458,20 +362,21 @@ maybeEliminate player = do
 	where
 	chance = deathChance (damageAmt player) (energy player)
 
+winScreen :: SDL.Surface -> Map String SDL.TTF.Font -> [Player] -> IO ()
 winScreen win fonts players = do
 	black <- color2pixel win $ SDL.Color 0 0 0
-	SDL.fillRect win (jRect 0 0 windowWidth windowHeight) black
+	True <- SDL.fillRect win (jRect 0 0 windowWidth windowHeight) black
 	(w, h) <- SDL.TTF.utf8Size (fonts ! "menu") "Press any key to exit"
 	anykey <- SDL.TTF.renderUTF8Blended (fonts ! "menu") "Press any key to exit" (SDL.Color 0xff 0xff 0xff)
-	SDL.blitSurface anykey Nothing win (jRect ((windowWidth `div` 2) - (w `div` 2)) 10 0 0)
+	True <- SDL.blitSurface anykey Nothing win (jRect ((windowWidth `div` 2) - (w `div` 2)) 10 0 0)
 	mapM_ (\(i,player) -> do
 			let (x,y) = ((windowWidth `div` 2) - (windowWidth `div` 4), (10+h+5)+(i*(64+10)))
 			c <- color2pixel win $ color player
-			SDL.fillRect win (jRect x y (windowWidth `div` 2) (64+4)) c
-			SDL.blitSurface (sprites player) (clipAnimation $ simpleAni (animations player) "idle" E) win (jRect (x+2) (y+2) 0 0)
+			True <- SDL.fillRect win (jRect x y (windowWidth `div` 2) (64+4)) c
+			True <- SDL.blitSurface (sprites player) (clipAnimation $ simpleAni (animations player) "idle" E) win (jRect (x+2) (y+2) 0 0)
 
 
-			(w, h) <- SDL.TTF.utf8Size (fonts ! "stats") "00"
+			(_, h) <- SDL.TTF.utf8Size (fonts ! "stats") "00"
 			deaths <- SDL.TTF.renderUTF8Blended (fonts ! "stats") (show $ deaths player) (SDL.Color 0xaa 0 0)
 			SDL.blitSurface deaths Nothing win (jRect (x+64+5) (y + ((64+4) `div` 2) - (h `div` 2)) 0 0)
 		) (zip [0..] sortedPlayers)
@@ -486,6 +391,7 @@ winScreen win fonts players = do
 			SDL.Quit -> return ()
 			_ -> pause
 
+gameLoop :: SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> Ticks -> [Item] -> H.Body -> Space -> [Player] -> [Projectile] -> [Item] -> IO ()
 gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace players projectiles items = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	ticks <- SDL.getTicks
@@ -556,6 +462,7 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 			(Nothing, Nothing) -> updateAnimation ticks $ p {ability = (doing, Nothing)}
 			(Just a, Nothing) -> p {ability = (Just a, doing)}
 			(Just a, Just b) -> p {ability = (Just a, if isJust doing then doing else Just b)}
+			_ -> error "Programmer error"
 
 	handleKeyboard ticks keystate keysym =
 		map (\player ->
@@ -570,10 +477,10 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 	comboKeyboard player KeyUp (Just (KFace d))
 		| null (unsetOneAxis (direction player) d) = [Go 0]
 		| otherwise = [Face $ head $ unsetOneAxis (direction player) d]
-	comboKeyboard player KeyDown (Just KAbility1) = [Ability "ability1"]
-	comboKeyboard player KeyDown (Just KAbility2) = [Ability "ability2"]
-	comboKeyboard player KeyUp (Just KAbility1) = [EndAbility]
-	comboKeyboard player KeyUp (Just KAbility2) = [EndAbility]
+	comboKeyboard _ KeyDown (Just KAbility1) = [Ability "ability1"]
+	comboKeyboard _ KeyDown (Just KAbility2) = [Ability "ability2"]
+	comboKeyboard _ KeyUp (Just KAbility1) = [EndAbility]
+	comboKeyboard _ KeyUp (Just KAbility2) = [EndAbility]
 	comboKeyboard _ _ _ = []
 
 	setOneAxis d E
@@ -620,7 +527,7 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 	doAbility ticks p@(Player {ability = (Just (DoingAbility _ a s (Just e)), nextAbility)})
 		| ((toInteger ticks) - (toInteger e)) >= toInteger (releaseLen a) = do
 			let len = fromIntegral $ (toInteger e) - (toInteger s)
-			let ratio = (if len < 1 then 1 else len) / (fromIntegral $ chargeLen a)
+			let ratio = (if len < 1 then (1::Double) else len) / (fromIntegral $ chargeLen a)
 			let duration = floor $ minimum [fromIntegral $ maxDuration a, (fromIntegral $ maxDuration a) * ratio]
 			let cost = floor $ minimum [fromIntegral $ energyCost a, (fromIntegral $ energyCost a) * ratio]
 
@@ -668,7 +575,7 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 	doAbilities players ticks =
 		second catMaybes `fmap` unzip `fmap` mapM (doAbility ticks) players
 	doPhysics ticks projectiles players = do
-		mapM setPlayerVelocity players
+		mapM_ setPlayerVelocity players
 		let (Space hSpace spaceTicks dtRemainder) = gameSpace
 
 		mutablePlayers <- mapM newIORef players
@@ -751,20 +658,17 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 		drawByZ win ds'
 		return ds'
 	drawPlayerStat offset w h player = do
-		white <- color2pixel win $ SDL.Color 0xff 0 0
 		group <- fmap fromIntegral $ get $ H.group $ shape player
 		let xadj = if deaths player < 10 then w `div` 2 else 0
 		let (sx, sy) = (offset+((group-1)*(w+6)), h+5)
 		deaths <- SDL.TTF.renderUTF8Blended (fonts ! "stats") (show $ deaths player) (SDL.Color 0xaa 0 0)
 		c <- color2pixel win $ color player
-		SDL.fillRect win (jRect (sx-2) (sy-2) (w+4) (h+4)) c
-		SDL.blitSurface deaths Nothing win (jRect (sx+xadj) sy 0 0)
-	zeroPad s
-		| length s < 2 = "0" ++ s
-		| otherwise = s
+		True <- SDL.fillRect win (jRect (sx-2) (sy-2) (w+4) (h+4)) c
+		True <- SDL.blitSurface deaths Nothing win (jRect (sx+xadj) sy 0 0)
+		return ()
 	doDrawing ticks players projectiles items = do
 		-- We don't know where the players were before. Erase whole screen
-		SDL.blitSurface grass Nothing win (jRect 0 0 0 0)
+		True <- SDL.blitSurface grass Nothing win (jRect 0 0 0 0)
 
 		items' <- advanceAndDrawByZ items ticks
 		players' <- advanceAndDrawByZ players ticks
@@ -773,16 +677,16 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 		(w, h) <- SDL.TTF.utf8Size (fonts ! "stats") "00"
 		(offset, _) <- SDL.TTF.utf8Size (fonts ! "stats") "Deaths  "
 		label <- SDL.TTF.renderUTF8Blended (fonts ! "stats") "Deaths  " (SDL.Color 0xff 0 0)
-		SDL.blitSurface label Nothing win (jRect 10 h 0 0)
+		True <- SDL.blitSurface label Nothing win (jRect 10 h 0 0)
 		mapM_ (drawPlayerStat (offset+10) w h) players
 
 		let minutes = (timeLimit - (ticks - startTicks)) `div` (1000*60)
 		let seconds = ((timeLimit - (ticks - startTicks)) `div` 1000) - (minutes*60)
-		let clockS = (zeroPad $ show minutes) ++ ":" ++ (zeroPad $ show seconds)
-		(w, h) <- SDL.TTF.utf8Size (fonts ! "stats") clockS
+		let clockS = (zeroPad 2 $ show minutes) ++ ":" ++ (zeroPad 2 $ show seconds)
+		(w, _) <- SDL.TTF.utf8Size (fonts ! "stats") clockS
 		clock <- SDL.TTF.renderUTF8Blended (fonts ! "stats") clockS (SDL.Color 0xff 0xff 0xff)
 		let centre = (windowWidth `div` 2) - (w `div` 2)
-		SDL.blitSurface clock Nothing win (jRect centre 5 0 0)
+		True <- SDL.blitSurface clock Nothing win (jRect centre 5 0 0)
 
 		let (projectiles'', deadProjectiles) = partition (\proj ->
 				not (isJust (deathPos proj) && isNothing (pani proj))
@@ -811,7 +715,8 @@ newPlayer space sprites music anis controls startTicks mass group = do
 		0 -> 0.8
 		1 -> 0.9
 		2 -> 1.0
-	let c = hsv2sdl (fromIntegral $ (group * 45) `mod` 360) 1 v
+		_ -> error "Programmer error"
+	let c = hsv2sdl (fromIntegral $ (group * 45) `mod` 360 :: Double) 1 v
 
 	pos <- randomLocation
 	H.position body $= pos
@@ -833,9 +738,6 @@ newPlayer space sprites music anis controls startTicks mass group = do
 	moment = H.momentForShape mass shapeType (H.Vector 0 0)
 	shapeType = H.Circle 16
 
-forkIO_ :: IO a -> IO ()
-forkIO_ f = (forkIO (f >> return ())) >> return ()
-
 player_parser :: Parser (String, String, Animations)
 player_parser = do
 	name <- takeWhile1 (not.isEndOfLine)
@@ -856,7 +758,7 @@ player_parser = do
 			)
 		return $ (T.unpack key, aniSet)
 	ability = do
-		string $ T.pack "attack"
+		constStr "attack"
 		maxDamage <- ws_int
 		maxKnockback <- ws_int
 		energyCost <- ws_int
@@ -864,7 +766,7 @@ player_parser = do
 		return (Attack maxDamage maxKnockback energyCost sound)
 	abisound = do
 		skipSpace
-		string $ T.pack "sound"
+		constStr "sound"
 		skipSpace
 		file <- takeWhile1 (not.isEndOfLine)
 		endOfLine
@@ -886,6 +788,7 @@ player_parser = do
 		(d3, Left a3) <- one_sub_attack
 		let a' = apply_c_r a d1 d3
 		return $ AbilityAnimation (a' dP (Just (aP,rP))) (Map.fromList [a1,a3])
+	sub_attack_partial _ _ _ = fail "Invalid subattack."
 	apply_c_r a d1 d2 = let [(_,c),(_,r)] = sortBy (comparing fst) [d1,d2] in a c r
 	one_sub_attack = do
 		let charge = sub_attack "charge" AbilityCharge
@@ -895,13 +798,13 @@ player_parser = do
 			Left (d, (s,a)) -> return ((fromEnum s,d), Left (s,a))
 			Right (d, r, a) -> return ((2,d), Right (r,a))
 	projectile = do
-		string $ T.pack "projectile"
+		constStr "projectile"
 		duration <- ws_int
 		rate <- ws_int
 		anis <- braces $ directed_animations
 		return (duration, rate, anis)
 	sub_attack s state = do
-		string $ T.pack s
+		constStr s
 		duration <- ws_int
 		anis <- braces $ directed_animations
 		return (duration, (state, anis))
@@ -914,20 +817,19 @@ player_parser = do
 		return (direction, ani col col)
 	braces f = do
 		skipSpace
-		char '{'
+		_ <- char '{'
 		skipSpace
 		v <- f
 		skipSpace
-		char '}'
+		_ <- char '}'
 		skipSpace
 		return v
+	constStr s = (string $ T.pack s) >> return ()
 	readOne = fmap (read . T.unpack) . choice . map (string . T.pack)
 	ws_int :: (Integral a) => Parser a
 	ws_int = skipSpace *> decimal
-	swap (a,b) = (b,a)
 
-sdlKeyName = drop 5 . show
-
+startGame :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> [((t, Animations, SDL.Surface, SDL.Mixer.Music), Control)] -> IO ()
 startGame menuMusic win fonts sounds grass controls = do
 	gameSpace <- H.newSpace
 	startTicks <- SDL.getTicks
@@ -973,6 +875,7 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 	kActionString KAbility1 = "Ability 1"
 	kActionString KAbility2 = "Ability 2"
 	kActionString KStart = "START"
+	kActionString _ = "???"
 	loop keyDown downFor aLeft controls = do
 		e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 		case e of
@@ -981,58 +884,59 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 			SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) -> do
 				let (existing, controls') = foldr (\(p,c) (done, xs) ->
 						case getKeyAction c keysym of
-							(Just (KFace E)) -> (1, ((p+1) `mod` (length pcs),c):xs)
-							(Just (KFace W)) -> (1, ((p+(length pcs)-1) `mod` (length pcs),c):xs)
-							(Just KStart) -> (-1, (p,c):xs)
-							(Just _) -> (1, (p,c):xs)
+							(Just (KFace E)) -> (IgnoreControl, ((p+1) `mod` (length pcs),c):xs)
+							(Just (KFace W)) -> (IgnoreControl, ((p+(length pcs)-1) `mod` (length pcs),c):xs)
+							(Just KStart) -> (STARTControl, (p,c):xs)
+							(Just _) -> (IgnoreControl, (p,c):xs)
 							_ -> (done, (p,c):xs)
-					) (0, []) controls
+					) (AddControl, []) controls
 				case existing of
-					0 -> loop (Just keysym) 0 aLeft controls'
-					1 -> loop Nothing 0 aLeft controls'
-					-1 -> startGame menuMusic win fonts sounds grass (tail $ map (\(p,c) -> (pcs!!p,c)) controls)
+					AddControl -> loop (Just keysym) 0 aLeft controls'
+					IgnoreControl -> loop Nothing 0 aLeft controls'
+					STARTControl -> startGame menuMusic win fonts sounds grass (tail $ map (\(p,c) -> (pcs!!p,c)) controls)
 			SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
 				loop (if (Just keysym) == keyDown then Nothing else keyDown) 0 aLeft controls
 			SDL.Quit -> return ()
 			_ -> loop keyDown downFor aLeft controls
 	barWidth downFor = minimum [windowWidth-20, ((windowWidth-20) * downFor) `div` 10]
 	addBinding b (KeyboardControl c) = KeyboardControl (b:c)
-	drawText surface x y font string color = do
+	drawText x y font string color = do
 		rendered <- SDL.TTF.renderUTF8Blended font string color
-		SDL.blitSurface rendered Nothing win (jRect x y 0 0)
+		True <- SDL.blitSurface rendered Nothing win (jRect x y 0 0)
+		return ()
 	centre w = (windowWidth `div` 2) - (w `div` 2)
 	drawActionLabel pnum a = do
 		let s = "Hold down " ++ (kActionString a) ++ " for Player " ++ (show pnum)
 		(w, h) <- SDL.TTF.utf8Size menuFont s
-		drawText win (centre w) 10 menuFont s (SDL.Color 0xff 0xff 0xff)
+		drawText (centre w) 10 menuFont s (SDL.Color 0xff 0xff 0xff)
 		return h
 	drawStartMsg = do
 		let s = "When all players have joined, press any START to begin"
 		(w, h) <- SDL.TTF.utf8Size menuFont s
-		drawText win (centre w) (windowHeight-(h*2)) menuFont s (SDL.Color 0xff 0xff 0xff)
+		drawText (centre w) (windowHeight-(h*2)) menuFont s (SDL.Color 0xff 0xff 0xff)
 	drawLabelAndPlayers a controls = do
 		drawStartMsg
 		labelH <- drawActionLabel ((length controls)+1) a
-		mapM (\(i,(p,_)) -> do
+		mapM_ (\(i,(p,_)) -> do
 				let (name, anis, sprites, _) = pcs !! p
 				let x = 10+(i*74)
 				let y = 20+(labelH*2)
-				drawText win x y menuFont ("Player "++show (i+1)) (SDL.Color 0xff 0xff 0xff)
-				SDL.blitSurface sprites (clipAnimation $ simpleAni anis "idle" E) win (jRect x (y+labelH+3) 0 0)
-				(w, h) <- SDL.TTF.utf8Size menuFont name
+				drawText x y menuFont ("Player "++show (i+1)) (SDL.Color 0xff 0xff 0xff)
+				True <- SDL.blitSurface sprites (clipAnimation $ simpleAni anis "idle" E) win (jRect x (y+labelH+3) 0 0)
+				(w, _) <- SDL.TTF.utf8Size menuFont name
 				let nx = x + (64 `div` 2) - (w `div` 2)
-				drawText win nx (y+labelH+64+3) menuFont name (SDL.Color 0xff 0xff 0xff)
+				drawText nx (y+labelH+64+3) menuFont name (SDL.Color 0xff 0xff 0xff)
 			) (zip [0..] (reverse controls))
 		return labelH
 	onTimer (Just keysym) downFor (a:aLeft) ((p,c):controls) = do
 		red <- color2pixel win $ SDL.Color 0xff 0 0
-		SDL.blitSurface grass Nothing win (jRect 0 0 0 0) -- erase screen
+		True <- SDL.blitSurface grass Nothing win (jRect 0 0 0 0) -- erase screen
 
 		labelH <- drawLabelAndPlayers a controls
 
 		(w, h) <- SDL.TTF.utf8Size menuFont (sdlKeyName keysym)
-		SDL.fillRect win (jRect 10 38 (barWidth downFor) (h+4)) red
-		drawText win (centre w) (15+labelH) menuFont (sdlKeyName keysym) (SDL.Color 0xff 0xff 0xff)
+		True <- SDL.fillRect win (jRect 10 38 (barWidth downFor) (h+4)) red
+		drawText (centre w) (15+labelH) menuFont (sdlKeyName keysym) (SDL.Color 0xff 0xff 0xff)
 
 		SDL.flip win
 
@@ -1046,22 +950,25 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 				loop (Just keysym) (downFor+1) (a:aLeft) ((p,c):controls)
 
 	onTimer keyDown downFor (a:aLeft) controls = do
-		SDL.blitSurface grass Nothing win (jRect 0 0 0 0) -- erase screen
-		drawLabelAndPlayers a (tail controls)
+		True <- SDL.blitSurface grass Nothing win (jRect 0 0 0 0) -- erase screen
+		_ <- drawLabelAndPlayers a (tail controls)
 		SDL.flip win
 		loop keyDown (downFor+1) (a:aLeft) controls
+	onTimer _ _ _ _ = error "Programmer error"
 
+withExternalLibs :: IO a -> IO ()
 withExternalLibs f = SDL.withInit [SDL.InitEverything] $ do
 	H.initChipmunk
-	SDL.TTF.init
+	True <- SDL.TTF.init
 	SDL.Mixer.openAudio SDL.Mixer.defaultFrequency SDL.Mixer.AudioS16Sys 2 1024
 
-	f
+	_ <- f
 
 	SDL.Mixer.closeAudio
 	SDL.TTF.quit
 	SDL.quit
 
+main :: IO ()
 main = withExternalLibs $ do
 	forkIO_ $ timer frameTime (SDL.tryPushEvent $ SDL.User SDL.UID0 0 nullPtr nullPtr)
 	win <- SDL.setVideoMode windowWidth windowHeight 16 [SDL.HWSurface,SDL.HWAccel,SDL.AnyFormat,SDL.DoubleBuf]

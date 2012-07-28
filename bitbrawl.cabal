@@ -1,0 +1,47 @@
+name:            bitbrawl
+version:         0.1
+cabal-version:   >= 1.8
+license:         OtherLicense
+license-file:    COPYING
+category:        Game
+copyright:       © 2012 Stephen Paul Weber
+author:          Stephen Paul Weber <singpolyma@singpolyma.net>
+maintainer:      Stephen Paul Weber <singpolyma@singpolyma.net>
+stability:       experimental
+tested-with:     GHC == 7.0.3
+synopsis:        Multiplayer brawler game
+homepage:        http://github.com/singpolyma/BitBrawl
+bug-reports:     http://github.com/singpolyma/BitBrawl/issues
+build-type:      Simple
+description:
+        This is a brawler game I built for the Liberated Pixel Cup.
+
+extra-source-files:
+        README
+
+executable bitbrawl
+        main-is: bitbrawl.hs
+
+        build-depends:
+                base == 4.*,
+                containers,
+                SDL,
+                SDL-image,
+                SDL-ttf,
+                SDL-mixer,
+                Hipmunk >= 5.2.0.9,
+                text >= 0.7,
+                attoparsec >= 0.10.0.0,
+                colour,
+                StateVar,
+                directory,
+                filepath,
+                random,
+                transformers
+
+        extra-libraries:
+                SDL_gfx
+
+source-repository head
+        type:     git
+        location: git://github.com/singpolyma/BitBrawl.git
