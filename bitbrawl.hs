@@ -1,3 +1,5 @@
+{-# LANGUAGE ForeignFunctionInterface #-}
+
 import Control.Monad
 import Control.Arrow
 import Control.Applicative
@@ -991,7 +993,7 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 			SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
 				loop (if (Just keysym) == keyDown then Nothing else keyDown) 0 aLeft controls
 			SDL.Quit -> return ()
-			_ -> print e >> loop keyDown downFor aLeft controls
+			_ -> loop keyDown downFor aLeft controls
 	barWidth downFor = minimum [windowWidth-20, ((windowWidth-20) * downFor) `div` 10]
 	addBinding b (KeyboardControl c) = KeyboardControl (b:c)
 	drawText surface x y font string color = do
