@@ -504,7 +504,7 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 			next winner gameSpace (handleKeyboard ticks KeyUp keysym) projectiles items
 
 		SDL.Quit -> return ()
-		_ -> print e >> next winner gameSpace players projectiles items
+		_ -> next winner gameSpace players projectiles items
 	where
 	next = gameLoop win fonts sounds grass startTicks possibleItems
 
