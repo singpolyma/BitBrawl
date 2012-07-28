@@ -1,4 +1,4 @@
-GHCFLAGS=-Wall -XNoCPP -fno-warn-name-shadowing -XHaskell98
+GHCFLAGS=-Wall -XNoCPP -fno-warn-name-shadowing -XHaskell98 -O2
 HLINTFLAGS=-XHaskell98 -XNoCPP -i 'Use camelCase' -i 'Use String' -i 'Use head' -i 'Use string literal' -i 'Use list comprehension' --utf8
 VERSION=0.1
 
@@ -15,7 +15,7 @@ report.html: BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Anima
 doc: dist/doc/html/bitbrawl/index.html README
 
 dist/doc/html/bitbrawl/index.html: dist/setup-config BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs
-	cabal haddock --hyperlink-source
+	cabal haddock --hyperlink-source --executables
 
 dist/setup-config: bitbrawl.cabal
 	cabal configure
