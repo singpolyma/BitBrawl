@@ -18,7 +18,6 @@ I am using cabal for all Haskell dependencies because some dependencies need to 
 	cabal install containers SDL SDL-image SDL-ttf SDL-mixer text attoparsec colour StateVar directory filepath random transformers
 	cabal install Hipmunk
 
-
 === Build BitBrawl ===
 
 	make
