@@ -6,7 +6,7 @@ I am using cabal for all Haskell dependencies because some dependencies need to 
 
 === Install GHC and Cabal ===
 
-	sudo apt-get install sudo apt-get install ghc cabal-install
+	sudo apt-get install ghc cabal-install
 
 === Install non-Haskell Dependencies ===
 
