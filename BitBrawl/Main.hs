@@ -903,16 +903,37 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 		return ()
 	centre w = (windowWidth `div` 2) - (w `div` 2)
 	drawActionLabel pnum a = do
-		let s = "Hold down " ++ kActionString a ++ " for Player " ++ show pnum
+		let s = "Hold down the button to use for Player " ++ show pnum ++ "'s " ++ kActionString a
 		(w, h) <- SDL.TTF.utf8Size menuFont s
 		drawText (centre w) 10 menuFont s (SDL.Color 0xff 0xff 0xff)
 		return h
-	drawStartMsg = do
+	drawInstr = do
 		let s = "When all players have joined, press any START to begin"
 		(w, h) <- SDL.TTF.utf8Size menuFont s
 		drawText (centre w) (windowHeight-(h*2)) menuFont s (SDL.Color 0xff 0xff 0xff)
+
+		let s = "Press your east/west keys (once configured) to select who you play as."
+		drawText 10 (windowHeight-(h*15)) menuFont s (SDL.Color 0xff 0xff 0xff)
+
+
+		let s = "Players compete in an attempt to eliminate each other within the time limit.  When a player is"
+		drawText 10 (windowHeight-(h*13)) menuFont s (SDL.Color 0xff 0xff 0xff)
+		let s = "eliminated, they are teleported to a new location, and their death count is incremented."
+		drawText 10 (windowHeight-(h*12)) menuFont s (SDL.Color 0xff 0xff 0xff)
+		let s = "Taking damage (red bar above player's head) increases the chance of being eliminated."
+
+		drawText 10 (windowHeight-(h*10)) menuFont s (SDL.Color 0xff 0xff 0xff)
+		let s = "Collect green orbs to increase stamina (green bar), which is needed for big attacks.  The lower"
+		drawText 10 (windowHeight-(h*9)) menuFont s (SDL.Color 0xff 0xff 0xff)
+		let s = "you are on stamina, the easier you are to kill.  Too low and one hit can eliminate you."
+		drawText 10 (windowHeight-(h*8)) menuFont s (SDL.Color 0xff 0xff 0xff)
+
+		let s = "Some attacks charge up over time, draining more stamina, doing more damage, and knocking "
+		drawText 10 (windowHeight-(h*6)) menuFont s (SDL.Color 0xff 0xff 0xff)
+		let s = "your opponent further back when you hold the button down longer."
+		drawText 10 (windowHeight-(h*5)) menuFont s (SDL.Color 0xff 0xff 0xff)
 	drawLabelAndPlayers a controls = do
-		drawStartMsg
+		drawInstr
 		labelH <- drawActionLabel (length controls + 1) a
 		mapM_ (\(i,(p,_)) -> do
 				let (name, anis, sprites, _) = pcs !! p
