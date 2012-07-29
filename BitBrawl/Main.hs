@@ -225,7 +225,7 @@ frameTime :: (Num a) => a
 frameTime = fromIntegral ((1000 :: Int) `div` frameRate)
 
 playerSpeed :: (Num a) => a
-playerSpeed = 75
+playerSpeed = 90
 
 energyDropTime :: (Num a) => a
 energyDropTime = 20000
