@@ -111,7 +111,7 @@ data Player = Player {
 	}
 	deriving (Eq)
 
-data KeyboardAction = KFace Direction | KAbility1 | KAbility2 | KStart | KSelect deriving (Show, Read, Eq)
+data KeyboardAction = KFace Direction | KAbility1 | KAbility2 | KAbility3 | KAbility4 | KStart | KSelect deriving (Show, Read, Eq)
 
 data Action = Face Direction | Go Speed | Ability String | EndAbility deriving (Show, Read, Eq)
 
@@ -449,8 +449,8 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 			(Just (DoingAbility {ended = Just _}), _) ->
 				p {ability = (second.fmap) time (ability p)}
 	handleAction ticks (Ability s) p =
-		let doing = case animations p ! s of
-			AbilityAnimation abi _ ->
+		let doing = case Map.lookup s (animations p) of
+			Just (AbilityAnimation abi _) ->
 				Just $ DoingAbility s abi ticks Nothing
 			_ -> Nothing
 		in
@@ -475,8 +475,12 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 		| otherwise = [Face $ head $ unsetOneAxis (direction player) d]
 	comboKeyboard _ KeyDown (Just KAbility1) = [Ability "ability1"]
 	comboKeyboard _ KeyDown (Just KAbility2) = [Ability "ability2"]
+	comboKeyboard _ KeyDown (Just KAbility3) = [Ability "ability3"]
+	comboKeyboard _ KeyDown (Just KAbility4) = [Ability "ability4"]
 	comboKeyboard _ KeyUp (Just KAbility1) = [EndAbility]
 	comboKeyboard _ KeyUp (Just KAbility2) = [EndAbility]
+	comboKeyboard _ KeyUp (Just KAbility3) = [EndAbility]
+	comboKeyboard _ KeyUp (Just KAbility4) = [EndAbility]
 	comboKeyboard _ _ _ = []
 
 	setOneAxis d E
@@ -909,13 +913,15 @@ playerJoinLoop menuMusic win fonts sounds mapImage tree pcs = do
 	where
 	emptyPC = (0, KeyboardControl [])
 	menuFont = fonts ! "menu"
-	kActions = [KStart, KSelect, KFace E, KFace N, KFace W, KFace S, KAbility1, KAbility2]
+	kActions = [KStart, KSelect, KFace E, KFace N, KFace W, KFace S, KAbility1, KAbility2, KAbility3, KAbility4]
 	kActionString (KFace E) = "East (Right)"
 	kActionString (KFace N) = "North (Up)"
 	kActionString (KFace W) = "West (Left)"
 	kActionString (KFace S) = "South (Down)"
 	kActionString KAbility1 = "Ability 1"
 	kActionString KAbility2 = "Ability 2"
+	kActionString KAbility3 = "Ability 3"
+	kActionString KAbility4 = "Ability 4"
 	kActionString KStart = "START"
 	kActionString KSelect = "SELECT"
 	kActionString _ = "???"
