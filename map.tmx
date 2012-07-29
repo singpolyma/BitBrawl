@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.0" orientation="orthogonal" width="25" height="19" tilewidth="32" tileheight="32">
+ <tileset firstgid="1" name="grass" tilewidth="32" tileheight="32">
+  <image source="grass.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="19" name="whitheredtree1" tilewidth="76" tileheight="92">
+  <image source="../../Downloads/lpc_full_assets/Barbara_Rivera__Concept Art for LPC Entry/whitheredtree1.png" width="76" height="92"/>
+ </tileset>
+ <tileset firstgid="20" name="greenground1" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Barbara_Rivera__Concept Art for LPC Entry/greenground1.png" width="800" height="600"/>
+ </tileset>
+ <tileset firstgid="470" name="cement" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/cement.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="488" name="cementstair" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/cementstair.png" width="160" height="128"/>
+ </tileset>
+ <tileset firstgid="508" name="dirt" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/dirt.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="526" name="dirt2" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/dirt2.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="544" name="chests" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/chests.png" width="64" height="96"/>
+ </tileset>
+ <tileset firstgid="550" name="grassalt" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/grassalt.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="568" name="hole" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/hole.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="586" name="holek" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/holek.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="604" name="holemid" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/holemid.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="622" name="lava" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/lava.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="640" name="lavarock" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/lavarock.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="658" name="mountains" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/mountains.png" width="384" height="288"/>
+ </tileset>
+ <tileset firstgid="766" name="rock" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/rock.png" width="64" height="32"/>
+ </tileset>
+ <tileset firstgid="768" name="treetop" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/treetop.png" width="192" height="224"/>
+ </tileset>
+ <tileset firstgid="810" name="trunk" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/trunk.png" width="192" height="96"/>
+ </tileset>
+ <tileset firstgid="828" name="watergrass" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/watergrass.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="846" name="waterfall" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/waterfall.png" width="96" height="160"/>
+ </tileset>
+ <tileset firstgid="861" name="water" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/base_assets/water.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="879" name="harbor" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Casper_Nilsson__LPC C.Nilsson/Harbor/harbor.png" width="224" height="224"/>
+ </tileset>
+ <tileset firstgid="928" name="tree_stump" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Casper_Nilsson__LPC C.Nilsson/Other/tree_stump.png" width="32" height="32"/>
+ </tileset>
+ <tileset firstgid="929" name="stonepattern" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Casper_Nilsson__LPC C.Nilsson/Other/stonepattern.png" width="160" height="160"/>
+ </tileset>
+ <tileset firstgid="954" name="chimney" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Emilio_J_Sanchez-Sierra__Steampun-a-fy (with concept art)/png/chimney.png" width="32" height="64"/>
+ </tileset>
+ <tileset firstgid="956" name="brickwalldark" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Emilio_J_Sanchez-Sierra__Steampun-a-fy (with concept art)/png/brickwalldark.png" width="32" height="32"/>
+ </tileset>
+ <tileset firstgid="957" name="wood_and_bronze_house" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Emilio_J_Sanchez-Sierra__Steampun-a-fy (with concept art)/png/wood_and_bronze_house.png" width="96" height="96"/>
+ </tileset>
+ <tileset firstgid="966" name="wooden_stairs" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Emilio_J_Sanchez-Sierra__Steampun-a-fy (with concept art)/png/wooden_stairs.png" width="32" height="32"/>
+ </tileset>
+ <tileset firstgid="967" name="contest-art" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Guido_Bos__Flowers, buildings and boxes/contest-art.png" width="544" height="412"/>
+ </tileset>
+ <tileset firstgid="1171" name="Sidewalk_dark" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Jonas__Klinger_Skorpio's SciFi Sprite Pack/Sidewalk_dark.png" width="128" height="128"/>
+ </tileset>
+ <tileset firstgid="1187" name="Tracks" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Jonas__Klinger_Skorpio's SciFi Sprite Pack/Tracks.png" width="128" height="128"/>
+ </tileset>
+ <tileset firstgid="1203" name="Street" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Jonas__Klinger_Skorpio's SciFi Sprite Pack/Street.png" width="800" height="608"/>
+ </tileset>
+ <tileset firstgid="1678" name="Pipes-RustyWalls" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Jonas__Klinger_Skorpio's SciFi Sprite Pack/Pipes-RustyWalls.png" width="256" height="352"/>
+ </tileset>
+ <tileset firstgid="1766" name="Objects" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Jonas__Klinger_Skorpio's SciFi Sprite Pack/Objects.png" width="256" height="256"/>
+ </tileset>
+ <tileset firstgid="1830" name="Laserfence" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Jonas__Klinger_Skorpio's SciFi Sprite Pack/Laserfence.png" width="256" height="256"/>
+ </tileset>
+ <tileset firstgid="1894" name="Vegies" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Joshua_Taylor__Fruit and Veggie Inventory/Vegies.png" width="512" height="128"/>
+ </tileset>
+ <tileset firstgid="1958" name="Limestone_wall01" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Leo_Villeveygoux__Limestone Wall/Limestone_wall01.png" width="256" height="128"/>
+ </tileset>
+ <tileset firstgid="1990" name="campfire" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Lori_Angela_Nagel__Jastiv's Artwork/png/campfire.png" width="96" height="64"/>
+ </tileset>
+ <tileset firstgid="1996" name="mushrooms1" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Lori_Angela_Nagel__Jastiv's Artwork/png/mushrooms1.png" width="32" height="32"/>
+ </tileset>
+ <tileset firstgid="1997" name="leaves" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Mark_Weyer__Caeles' LPC art/leaves.png" width="512" height="160"/>
+ </tileset>
+ <tileset firstgid="2077" name="signpost" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Mark_Weyer__Caeles' LPC art/signpost.png" width="160" height="64"/>
+ </tileset>
+ <tileset firstgid="2087" name="platformtree" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Mark_Weyer__Caeles' LPC art/platformtree.png" width="64" height="128"/>
+ </tileset>
+ <tileset firstgid="2095" name="birdbath" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Mark_Weyer__Caeles' LPC art/birdbath.png" width="288" height="64"/>
+ </tileset>
+ <tileset firstgid="2113" name="dirt_night" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Skyler_Robert_Colladay__FeralFantom's Entry/dirt_night.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="2131" name="grass_night" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Skyler_Robert_Colladay__FeralFantom's Entry/grass_night.png" width="96" height="192"/>
+ </tileset>
+ <tileset firstgid="2149" name="water" tilewidth="32" tileheight="32">
+  <image source="../../Downloads/lpc_full_assets/Stefan_Beller__Animated water tiles/water.png" width="96" height="192"/>
+ </tileset>
+ <layer name="Tile Layer 1" width="25" height="19">
+  <data encoding="base64" compression="zlib">
+   eJwTYmBgEAJiQSgWogEfRnOjiVOTLwjlC9GQj+w3IRryR+NjND5G42M0PkbjY3jFBwBd5R7t
+  </data>
+ </layer>
+ <layer name="Tile Layer 2" width="25" height="19">
+  <data encoding="base64" compression="zlib">
+   eJxjYKAdYGJiYGBmoq35jEDMRqYdC5iJN/8vI6a8DQH9hADMfG6oHexo/viPxCfHLpj5vFD3cwJpLixhRa7ZzATcT66ZzEhmw9wNw9jcT4r5sPgEYR4optTduMxHdjsl7kY3nxsap9xUdDuy+Txo7ifX7Ypo+pDDhwfqB3zuP8NOup2sULNJCXtS7WGlUnrHBf4wQuzAFz7xZNr9nxFiPiwuQOFEjbQJAyVAs0qhmJGIOCbH/GIgrgfifDLLBQsCasuh5tcBcSUV3Q4A8gMWow==
+  </data>
+ </layer>
+ <layer name="Tile Layer 3" width="25" height="19">
+  <data encoding="base64" compression="zlib">
+   eJxjYBgFowA7sGceaBeMguEMCpkG2gWDH+QN4TAqo4Pba4ZQ+AAAVXUCHA==
+  </data>
+ </layer>
+</map>

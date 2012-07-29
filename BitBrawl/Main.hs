@@ -279,19 +279,6 @@ directionToRadians d = (factor * pi) / 4
 getKeyAction :: Control -> SDLKey -> Maybe KeyboardAction
 getKeyAction (KeyboardControl c) keysym = lookup keysym c
 
-generateGrass :: SDL.Surface -> IO SDL.Surface
-generateGrass sprites = do
-	surface <- SDL.createRGBSurface [SDL.HWSurface, SDL.AnyFormat] windowWidth windowHeight 16 0 0 0 0
-	mapM_ (\y ->
-			mapM_ (\x ->
-				SDL.blitSurface sprites (jRect 32 rowy width 32) surface (jRect x y 0 0)
-			) [0, width .. windowWidth]
-		) [0, 32 .. windowHeight]
-	return surface
-	where
-	width = 2 * 32
-	rowy = 5 * 32
-
 doingAbilityState :: DoingAbility -> AbilityState
 doingAbilityState (DoingAbility {ended = Nothing}) = AbilityCharge
 doingAbilityState (DoingAbility {ended = Just _}) = AbilityRelease
@@ -389,7 +376,7 @@ winScreen win fonts players = do
 			_ -> pause
 
 gameLoop :: SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> Ticks -> [Item] -> H.Body -> Space -> [Player] -> [Projectile] -> [Item] -> IO ()
-gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace players projectiles items = do
+gameLoop win fonts sounds mapImage startTicks possibleItems winner gameSpace players projectiles items = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	ticks <- SDL.getTicks
 	case e of
@@ -437,7 +424,7 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 		SDL.Quit -> return ()
 		_ -> next winner gameSpace players projectiles items
 	where
-	next = gameLoop win fonts sounds grass startTicks possibleItems
+	next = gameLoop win fonts sounds mapImage startTicks possibleItems
 
 	handleAction ticks (Face d) p = updateAnimation ticks $ p {direction = d}
 	handleAction ticks (Go s) p = updateAnimation ticks $ p {speed = s}
@@ -665,7 +652,7 @@ gameLoop win fonts sounds grass startTicks possibleItems winner gameSpace player
 		return ()
 	doDrawing ticks players projectiles items = do
 		-- We don't know where the players were before. Erase whole screen
-		True <- SDL.blitSurface grass Nothing win (jRect 0 0 0 0)
+		True <- SDL.blitSurface mapImage Nothing win (jRect 0 0 0 0)
 
 		items' <- advanceAndDrawByZ items ticks
 		players' <- advanceAndDrawByZ players ticks
@@ -827,7 +814,7 @@ player_parser = do
 	ws_int = skipSpace *> decimal
 
 startGame :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> [((t, Animations, SDL.Surface, SDL.Mixer.Music), Control)] -> IO ()
-startGame menuMusic win fonts sounds grass controls = do
+startGame menuMusic win fonts sounds mapImage controls = do
 	gameSpace <- H.newSpace
 	startTicks <- SDL.getTicks
 
@@ -840,6 +827,41 @@ startGame menuMusic win fonts sounds grass controls = do
 			line (0, -windowHeight) (windowWidth, -windowHeight)
 		]
 
+	-- Block off the objects on our map
+	addStatic gameSpace =<< mapM (H.newShape edgesBody (H.Circle 16)) [
+			grid2hipmunk  4  3,
+			grid2hipmunk  3  4,
+			grid2hipmunk  4  5,
+			grid2hipmunk  6  4,
+			grid2hipmunk 13  2,
+			grid2hipmunk 10  5,
+			grid2hipmunk  4 11,
+			grid2hipmunk 12 11,
+			grid2hipmunk 10 14,
+			grid2hipmunk  7 14,
+			grid2hipmunk  6 15,
+			grid2hipmunk  5 15,
+			grid2hipmunk 16 14,
+			grid2hipmunk 20 17,
+
+			-- Lava pit
+			grid2hipmunk  4 16,
+			grid2hipmunk  5 16,
+			grid2hipmunk  6 16,
+			grid2hipmunk  7 16,
+
+			grid2hipmunk  3 17,
+			grid2hipmunk  4 17,
+			grid2hipmunk  5 17,
+			grid2hipmunk  6 17,
+			grid2hipmunk  7 17,
+
+			grid2hipmunk  3 18,
+			grid2hipmunk  4 18,
+			grid2hipmunk  5 18,
+			grid2hipmunk  6 18
+		]
+
 	players <- mapM (\(i,((_,anis,sprites,music), c)) ->
 			newPlayer gameSpace sprites music anis c startTicks 10 i
 		) (zip [1..] (reverse controls))
@@ -850,16 +872,17 @@ startGame menuMusic win fonts sounds grass controls = do
 	
 	switchMusic (music $ head players)
 	touchForeignPtr menuMusic
-	gameLoop win fonts sounds grass startTicks [energyPellet] (control $ head players) (Space gameSpace startTicks 0) players [] []
+	gameLoop win fonts sounds mapImage startTicks [energyPellet] (control $ head players) (Space gameSpace startTicks 0) players [] []
 
 	H.freeSpace gameSpace
 	where
+	grid2hipmunk x y = H.Vector (x*32 + 16) (y*(-32) - 16)
 	addStatic space = mapM_ (H.spaceAdd space . H.Static)
 	pinShape body shape = H.newShape body shape (H.Vector 0 0)
 	line (x1, y1) (x2, y2) = H.LineSegment (H.Vector x1 y1) (H.Vector x2 y2) 0
 
 playerJoinLoop :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> [(String, Animations, SDL.Surface, SDL.Mixer.Music)] -> IO ()
-playerJoinLoop menuMusic win fonts sounds grass pcs = do
+playerJoinLoop menuMusic win fonts sounds mapImage pcs = do
 	switchMusic menuMusic
 	loop Nothing 0 kActions [emptyPC]
 	where
@@ -899,7 +922,7 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 				case existing of
 					AddControl -> loop (Just keysym) 0 aLeft' controls''
 					IgnoreControl -> loop Nothing 0 aLeft' controls''
-					STARTControl -> startGame menuMusic win fonts sounds grass (tail $ map (first (pcs!!)) controls)
+					STARTControl -> startGame menuMusic win fonts sounds mapImage (tail $ map (first (pcs!!)) controls)
 			SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
 				loop (if Just keysym == keyDown then Nothing else keyDown) 0 aLeft controls
 			SDL.Quit -> return ()
@@ -959,7 +982,7 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 		return labelH
 	onTimer (Just keysym) downFor (a:aLeft) ((p,c):controls) = do
 		red <- color2pixel win $ SDL.Color 0xff 0 0
-		True <- SDL.blitSurface grass Nothing win (jRect 0 0 0 0) -- erase screen
+		True <- SDL.blitSurface mapImage Nothing win (jRect 0 0 0 0) -- erase screen
 
 		labelH <- drawLabelAndPlayers a controls
 
@@ -979,7 +1002,7 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 				loop (Just keysym) (downFor+1) (a:aLeft) ((p,c):controls)
 
 	onTimer keyDown downFor (a:aLeft) controls = do
-		True <- SDL.blitSurface grass Nothing win (jRect 0 0 0 0) -- erase screen
+		True <- SDL.blitSurface mapImage Nothing win (jRect 0 0 0 0) -- erase screen
 		_ <- drawLabelAndPlayers a (tail controls)
 		SDL.flip win
 		loop keyDown (downFor+1) (a:aLeft) controls
@@ -1010,8 +1033,8 @@ main = withExternalLibs $ do
 
 	let fonts = Map.fromList [("menu", menuFont), ("stats", statsFont)]
 
-	grassPath <- fmap head $ findDataFiles ((=="grass.png") . takeFileName)
-	grass <- SDL.load grassPath >>= generateGrass
+	mapPath <- fmap head $ findDataFiles ((=="map.png") . takeFileName)
+	mapImage <- SDL.load mapPath
 
 	pcs <- findDataFiles ((==".player") . takeExtension) >>= mapM (\p -> do
 			Right (name,music,anis) <- fmap (parseOnly player_parser) $ T.readFile p
@@ -1036,7 +1059,7 @@ main = withExternalLibs $ do
 	menuMusicPath <- fmap head $ findDataFiles ((=="menu.ogg") . takeFileName)
 	menuMusic <- SDL.Mixer.loadMUS menuMusicPath
 
-	playerJoinLoop menuMusic win fonts soundsMap grass pcs
+	playerJoinLoop menuMusic win fonts soundsMap mapImage pcs
 
 	-- Need to do this so that SDL.TTF.quit will not segfault
 	finalizeForeignPtr menuFont
