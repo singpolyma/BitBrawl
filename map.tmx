@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <map version="1.0" orientation="orthogonal" width="25" height="19" tilewidth="32" tileheight="32">
  <tileset firstgid="1" name="grass" tilewidth="32" tileheight="32">
-  <image source="grass.png" width="96" height="192"/>
+  <image source="../../Downloads/lpc_full_assets/base_assets/grass.png" width="96" height="192"/>
  </tileset>
  <tileset firstgid="19" name="whitheredtree1" tilewidth="76" tileheight="92">
   <image source="../../Downloads/lpc_full_assets/Barbara_Rivera__Concept Art for LPC Entry/whitheredtree1.png" width="76" height="92"/>
