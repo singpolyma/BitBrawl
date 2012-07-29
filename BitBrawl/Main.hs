@@ -122,6 +122,18 @@ data Control = KeyboardControl [(SDLKey, KeyboardAction)] deriving (Show, Eq)
 
 data Space = Space H.Space Ticks Ticks
 
+class CollisionLayers a where
+	collisionLayers :: a -> H.Layers
+
+instance CollisionLayers Player where
+	collisionLayers _ = 0xffffffff
+
+instance CollisionLayers Projectile where
+	collisionLayers _ = 0x1
+
+instance CollisionLayers H.StaticShape where
+	collisionLayers _ = 0x2
+
 class CollisionType a where
 	collisionType :: a -> H.CollisionType
 
@@ -547,6 +559,7 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 
 					($=) (H.group shp) =<< get (H.group $ shape p)
 					H.collisionType shp $= collisionType newProjectile
+					H.layers shp $= collisionLayers newProjectile
 
 					let (Space s _ _) = gameSpace
 					H.spaceAdd s body
@@ -714,6 +727,7 @@ newPlayer space sprites music anis controls startTicks mass group = do
 
 	let player = updateAnimation startTicks $ Player c sprites music shape control controls (undefined, startTicks) anis (Nothing, Nothing) E 0 50 0 0
 	H.collisionType shape $= collisionType player
+	H.layers shape $= collisionLayers player
 	return player
 	where
 	mkConstraint control body c bias force = do
@@ -881,7 +895,10 @@ startGame menuMusic win fonts sounds mapImage tree controls = do
 	H.freeSpace gameSpace
 	where
 	grid2hipmunk x y = H.Vector (x*32 + 16) (y*(-32) - 16)
-	addStatic space = mapM_ (H.spaceAdd space . H.Static)
+	addStatic space = mapM_ (\shp -> do
+			H.layers shp $= collisionLayers (H.Static shp)
+			H.spaceAdd space $ H.Static shp
+		)
 	pinShape body shape = H.newShape body shape (H.Vector 0 0)
 	line (x1, y1) (x2, y2) = H.LineSegment (H.Vector x1 y1) (H.Vector x2 y2) 0
 
