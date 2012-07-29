@@ -4,7 +4,7 @@ import Control.Monad
 import Control.Arrow
 import Control.Applicative
 import Control.Monad.IO.Class
-import Foreign (nullPtr, touchForeignPtr)
+import Foreign (nullPtr, touchForeignPtr, finalizeForeignPtr)
 import Data.Ord
 import Data.Char hiding (Space)
 import Data.List
@@ -1026,3 +1026,7 @@ main = withExternalLibs $ do
 	menuMusic <- SDL.Mixer.loadMUS menuMusicPath
 
 	playerJoinLoop menuMusic win fonts soundsMap grass pcs
+
+	-- Need to do this so that SDL.TTF.quit will not segfault
+	finalizeForeignPtr menuFont
+	finalizeForeignPtr statsFont
