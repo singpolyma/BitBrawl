@@ -375,8 +375,8 @@ winScreen win fonts players = do
 			SDL.Quit -> return ()
 			_ -> pause
 
-gameLoop :: SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> Ticks -> [Item] -> H.Body -> Space -> [Player] -> [Projectile] -> [Item] -> IO ()
-gameLoop win fonts sounds mapImage startTicks possibleItems winner gameSpace players projectiles items = do
+gameLoop :: SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> SDL.Surface -> Ticks -> [Item] -> H.Body -> Space -> [Player] -> [Projectile] -> [Item] -> IO ()
+gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpace players projectiles items = do
 	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
 	ticks <- SDL.getTicks
 	case e of
@@ -424,7 +424,7 @@ gameLoop win fonts sounds mapImage startTicks possibleItems winner gameSpace pla
 		SDL.Quit -> return ()
 		_ -> next winner gameSpace players projectiles items
 	where
-	next = gameLoop win fonts sounds mapImage startTicks possibleItems
+	next = gameLoop win fonts sounds mapImage tree startTicks possibleItems
 
 	handleAction ticks (Face d) p = updateAnimation ticks $ p {direction = d}
 	handleAction ticks (Go s) p = updateAnimation ticks $ p {speed = s}
@@ -664,6 +664,8 @@ gameLoop win fonts sounds mapImage startTicks possibleItems winner gameSpace pla
 		True <- SDL.blitSurface label Nothing win (jRect 10 h 0 0)
 		mapM_ (drawPlayerStat (offset+10) w h) players
 
+		True <- SDL.blitSurface tree Nothing win (jRect (19*32) (10*32) 0 0)
+
 		let minutes = (timeLimit - (ticks - startTicks)) `div` (1000*60)
 		let seconds = ((timeLimit - (ticks - startTicks)) `div` 1000) - (minutes*60)
 		let clockS = zeroPad 2 (show minutes) ++ ":" ++ zeroPad 2 (show seconds)
@@ -813,8 +815,8 @@ player_parser = do
 	ws_int :: (Integral a) => Parser a
 	ws_int = skipSpace *> decimal
 
-startGame :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> [((t, Animations, SDL.Surface, SDL.Mixer.Music), Control)] -> IO ()
-startGame menuMusic win fonts sounds mapImage controls = do
+startGame :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> SDL.Surface -> [((t, Animations, SDL.Surface, SDL.Mixer.Music), Control)] -> IO ()
+startGame menuMusic win fonts sounds mapImage tree controls = do
 	gameSpace <- H.newSpace
 	startTicks <- SDL.getTicks
 
@@ -861,6 +863,8 @@ startGame menuMusic win fonts sounds mapImage controls = do
 			grid2hipmunk  5 18,
 			grid2hipmunk  6 18
 		]
+	-- Block off tree
+	addStatic gameSpace =<< sequence [H.newShape edgesBody (H.Circle 32) (H.Vector (19*32 + 32) (12*(-32) - 32))]
 
 	players <- mapM (\(i,((_,anis,sprites,music), c)) ->
 			newPlayer gameSpace sprites music anis c startTicks 10 i
@@ -872,7 +876,7 @@ startGame menuMusic win fonts sounds mapImage controls = do
 	
 	switchMusic (music $ head players)
 	touchForeignPtr menuMusic
-	gameLoop win fonts sounds mapImage startTicks [energyPellet] (control $ head players) (Space gameSpace startTicks 0) players [] []
+	gameLoop win fonts sounds mapImage tree startTicks [energyPellet] (control $ head players) (Space gameSpace startTicks 0) players [] []
 
 	H.freeSpace gameSpace
 	where
@@ -881,8 +885,8 @@ startGame menuMusic win fonts sounds mapImage controls = do
 	pinShape body shape = H.newShape body shape (H.Vector 0 0)
 	line (x1, y1) (x2, y2) = H.LineSegment (H.Vector x1 y1) (H.Vector x2 y2) 0
 
-playerJoinLoop :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> [(String, Animations, SDL.Surface, SDL.Mixer.Music)] -> IO ()
-playerJoinLoop menuMusic win fonts sounds mapImage pcs = do
+playerJoinLoop :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> SDL.Surface -> [(String, Animations, SDL.Surface, SDL.Mixer.Music)] -> IO ()
+playerJoinLoop menuMusic win fonts sounds mapImage tree pcs = do
 	switchMusic menuMusic
 	loop Nothing 0 kActions [emptyPC]
 	where
@@ -922,7 +926,7 @@ playerJoinLoop menuMusic win fonts sounds mapImage pcs = do
 				case existing of
 					AddControl -> loop (Just keysym) 0 aLeft' controls''
 					IgnoreControl -> loop Nothing 0 aLeft' controls''
-					STARTControl -> startGame menuMusic win fonts sounds mapImage (tail $ map (first (pcs!!)) controls)
+					STARTControl -> startGame menuMusic win fonts sounds mapImage tree (tail $ map (first (pcs!!)) controls)
 			SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
 				loop (if Just keysym == keyDown then Nothing else keyDown) 0 aLeft controls
 			SDL.Quit -> return ()
@@ -1036,6 +1040,9 @@ main = withExternalLibs $ do
 	mapPath <- fmap head $ findDataFiles ((=="map.png") . takeFileName)
 	mapImage <- SDL.load mapPath
 
+	treePath <- fmap head $ findDataFiles ((=="witheredtree.png") . takeFileName)
+	tree <- SDL.load treePath
+
 	pcs <- findDataFiles ((==".player") . takeExtension) >>= mapM (\p -> do
 			Right (name,music,anis) <- fmap (parseOnly player_parser) $ T.readFile p
 			sprites <- SDL.load $ replaceExtension p "png"
@@ -1059,7 +1066,7 @@ main = withExternalLibs $ do
 	menuMusicPath <- fmap head $ findDataFiles ((=="menu.ogg") . takeFileName)
 	menuMusic <- SDL.Mixer.loadMUS menuMusicPath
 
-	playerJoinLoop menuMusic win fonts soundsMap mapImage pcs
+	playerJoinLoop menuMusic win fonts soundsMap mapImage tree pcs
 
 	-- Need to do this so that SDL.TTF.quit will not segfault
 	finalizeForeignPtr menuFont
