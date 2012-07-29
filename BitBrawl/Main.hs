@@ -111,7 +111,7 @@ data Player = Player {
 	}
 	deriving (Eq)
 
-data KeyboardAction = KFace Direction | KAbility1 | KAbility2 | KStart deriving (Show, Read, Eq)
+data KeyboardAction = KFace Direction | KAbility1 | KAbility2 | KStart | KSelect deriving (Show, Read, Eq)
 
 data Action = Face Direction | Go Speed | Ability String | EndAbility deriving (Show, Read, Eq)
 
@@ -861,10 +861,11 @@ startGame menuMusic win fonts sounds grass controls = do
 playerJoinLoop :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> [(String, Animations, SDL.Surface, SDL.Mixer.Music)] -> IO ()
 playerJoinLoop menuMusic win fonts sounds grass pcs = do
 	switchMusic menuMusic
-	loop Nothing 0 kActions [(0, KeyboardControl [])]
+	loop Nothing 0 kActions [emptyPC]
 	where
+	emptyPC = (0, KeyboardControl [])
 	menuFont = fonts ! "menu"
-	kActions = [KFace E, KFace N, KFace W, KFace S, KAbility1, KAbility2, KStart]
+	kActions = [KStart, KSelect, KFace E, KFace N, KFace W, KFace S, KAbility1, KAbility2]
 	kActionString (KFace E) = "East (Right)"
 	kActionString (KFace N) = "North (Up)"
 	kActionString (KFace W) = "West (Left)"
@@ -872,6 +873,7 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 	kActionString KAbility1 = "Ability 1"
 	kActionString KAbility2 = "Ability 2"
 	kActionString KStart = "START"
+	kActionString KSelect = "SELECT"
 	kActionString _ = "???"
 	loop keyDown downFor aLeft controls = do
 		e <- SDL.waitEvent -- Have to use the expensive wait so timer works
@@ -884,12 +886,19 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 							(Just (KFace E)) -> (IgnoreControl, ((p+1) `mod` length pcs,c):xs)
 							(Just (KFace W)) -> (IgnoreControl, ((p + length pcs - 1) `mod` length pcs,c):xs)
 							(Just KStart) -> (STARTControl, (p,c):xs)
+							(Just KSelect) -> (IgnoreControl, xs)
 							(Just _) -> (IgnoreControl, (p,c):xs)
 							_ -> (done, (p,c):xs)
 					) (AddControl, []) controls
+				let controls''
+					| null controls' = [emptyPC]
+					| otherwise = controls'
+				let aLeft'
+					| snd (head controls'') /= snd (head controls) = kActions
+					| otherwise = aLeft
 				case existing of
-					AddControl -> loop (Just keysym) 0 aLeft controls'
-					IgnoreControl -> loop Nothing 0 aLeft controls'
+					AddControl -> loop (Just keysym) 0 aLeft' controls''
+					IgnoreControl -> loop Nothing 0 aLeft' controls''
 					STARTControl -> startGame menuMusic win fonts sounds grass (tail $ map (first (pcs!!)) controls)
 			SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
 				loop (if Just keysym == keyDown then Nothing else keyDown) 0 aLeft controls
@@ -913,6 +922,8 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 		drawText (centre w) (windowHeight-(h*2)) menuFont s (SDL.Color 0xff 0xff 0xff)
 
 		let s = "Press your east/west keys (once configured) to select who you play as."
+		drawText 10 (windowHeight-(h*16)) menuFont s (SDL.Color 0xff 0xff 0xff)
+		let s = "Press SELECT (once configured) to drop out."
 		drawText 10 (windowHeight-(h*15)) menuFont s (SDL.Color 0xff 0xff 0xff)
 
 
@@ -961,7 +972,7 @@ playerJoinLoop menuMusic win fonts sounds grass pcs = do
 		if downFor > 10 then
 				let cs = (p,addBinding (keysym, a) c):controls in
 				if null aLeft then
-					loop Nothing 0 kActions ((0, KeyboardControl []):cs)
+					loop Nothing 0 kActions (emptyPC:cs)
 				else
 					loop Nothing 0 aLeft cs
 			else
