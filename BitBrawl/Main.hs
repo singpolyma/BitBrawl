@@ -2,6 +2,7 @@ module Main where
 
 import Control.Monad
 import Control.Arrow
+import Control.Concurrent
 import Control.Applicative
 import Control.Monad.IO.Class
 import Foreign (nullPtr, touchForeignPtr, finalizeForeignPtr)
@@ -385,6 +386,7 @@ winScreen win fonts players = do
 			SDL.blitSurface deaths Nothing win (jRect (x+64+5) (y + ((64+4) `div` 2) - (h `div` 2)) 0 0)
 		) (zip [0..] sortedPlayers)
 	SDL.flip win
+	threadDelay 3000000
 	pause
 	where
 	sortedPlayers = sortBy (comparing deaths) players
