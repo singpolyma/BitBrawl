@@ -19,7 +19,6 @@ drawAnimation win sprites animation (x,y) = do
 
 advanceAnimation :: (Animation,Ticks) -> Ticks -> Ticks -> (Animation,Ticks)
 advanceAnimation (ani, now) frameRate ticks
-	| frames ani < 2 = (ani, ticks)
 	| frame' == frame ani = (ani, now)
 	| otherwise = (ani { frame = frame' }, ticks)
 	where
@@ -30,7 +29,8 @@ advanceAnimation (ani, now) frameRate ticks
 
 wrapAnimation :: Animation -> Animation
 wrapAnimation a@(Animation {frame = f, frames = fs, col = c})
-	| f >= maxCol = wrapAnimation $ a {frame = maxCol - f}
+	| f < c = wrapAnimation $ a {frame = c + (-(f+c))}
+	| f >= maxCol = wrapAnimation $ a {frame = maxCol - (f-c)}
 	| otherwise = a
 	where
 	maxCol = c + fs
