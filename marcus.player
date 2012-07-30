@@ -113,3 +113,47 @@ ability2 {
 		SW 23 16 0
 	}
 }
+
+ability3 {
+	attack 10 0 10
+	sound thunder.ogg
+
+	charge 1000 {
+		E  19 5 0
+		W  17 5 0
+
+		N  16 5 0
+		NE 16 5 0
+		NW 16 5 0
+
+		S  18 5 0
+		SE 18 5 0
+		SW 18 5 0
+	}
+
+	release 100 {
+		E  19 1 6
+		W  17 1 6
+
+		N  16 1 6
+		NE 16 1 6
+		NW 16 1 6
+
+		S  18 1 6
+		SE 18 1 6
+		SW 18 1 6
+	}
+
+	projectile 700 22 {
+		E  25 16 0
+		W  25 16 0
+
+		N  25 16 0
+		NE 25 16 0
+		NW 25 16 0
+
+		S  25 16 0
+		SE 25 16 0
+		SW 25 16 0
+	}
+}
