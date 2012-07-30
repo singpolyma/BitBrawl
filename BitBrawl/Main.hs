@@ -936,19 +936,16 @@ playerJoinLoop menuMusic win fonts sounds mapImage tree pcs = do
 							(Just (KFace E)) -> (IgnoreControl, ((p+1) `mod` length pcs,c):xs)
 							(Just (KFace W)) -> (IgnoreControl, ((p + length pcs - 1) `mod` length pcs,c):xs)
 							(Just KStart) -> (STARTControl, (p,c):xs)
-							(Just KSelect) -> (IgnoreControl, xs)
+							(Just KSelect) -> (IgnoreControl, emptyPC:xs)
 							(Just _) -> (IgnoreControl, (p,c):xs)
 							_ -> (done, (p,c):xs)
 					) (AddControl, []) controls
-				let controls''
-					| null controls' = [emptyPC]
-					| otherwise = controls'
 				let aLeft'
-					| snd (head controls'') /= snd (head controls) = kActions
+					| snd (head controls') /= snd (head controls) = kActions
 					| otherwise = aLeft
 				case existing of
-					AddControl -> loop (Just keysym) 0 aLeft' controls''
-					IgnoreControl -> loop Nothing 0 aLeft' controls''
+					AddControl -> loop (Just keysym) 0 aLeft' controls'
+					IgnoreControl -> loop Nothing 0 aLeft' controls'
 					STARTControl -> startGame menuMusic win fonts sounds mapImage tree (tail $ map (first (pcs!!)) controls)
 			SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
 				loop (if Just keysym == keyDown then Nothing else keyDown) 0 aLeft controls
