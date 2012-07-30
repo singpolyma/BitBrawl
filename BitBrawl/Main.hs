@@ -209,7 +209,7 @@ instance Drawable Projectile where
 	advance projectile@(Projectile {pani = Just (a,rate,aniTicks)}) ticks =
 		let (ani,aniTicks') = advanceAnimation (a,aniTicks) rate ticks
 		    p = projectile {pani = Just (wrapAnimation ani, rate, aniTicks')} in
-		if frame ani >= frames ani && isJust (deathPos p) then
+		if frame ani >= (frames ani - col ani) && isJust (deathPos p) then
 			p {pani = Nothing} -- shape is gone, animation is done
 		else
 			p
