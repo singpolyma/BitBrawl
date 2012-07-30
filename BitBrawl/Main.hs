@@ -542,7 +542,7 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 		) `fmap` nextAbility
 	maybePlaySound (Just snd) = do
 		let s = sounds ! snd
-		_ <- SDL.Mixer.playChannel (-1) s 0
+		_ <- SDL.Mixer.tryPlayChannel (-1) s 0
 		return ()
 	maybePlaySound _ = return ()
 	ratioFromLen a s e =
