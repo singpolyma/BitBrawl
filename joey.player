@@ -145,3 +145,20 @@ ability3 {
 		SW 23 1 0
 	}
 }
+
+ability4 {
+	block 300 1 0 0
+
+	charge 200 {
+		E  15 4 0
+		W  13 4 0
+
+		N  12 4 0
+		NE 12 4 0
+		NW 12 4 0
+
+		S  14 4 0
+		SE 14 4 0
+		SW 14 4 0
+	}
+}

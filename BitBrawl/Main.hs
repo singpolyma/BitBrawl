@@ -75,13 +75,11 @@ data Ability = Attack {
 		projectileAnis :: Maybe (DirectedAnimations, Ticks)
 	} |
 	Block {
-		sound          :: Maybe String,
-		energyCost     :: Int,
-		chargeLen      :: Ticks,
-		releaseLen     :: Ticks,
 		maxDuration    :: Ticks,
+		energyCost     :: Int,
 		velocity       :: H.Vector,
-		projectileAnis :: Maybe (DirectedAnimations, Ticks)
+		sound          :: Maybe String,
+		chargeLen      :: Ticks
 	}
 	deriving (Show, Eq)
 
@@ -187,6 +185,7 @@ instance Drawable Player where
 		playerAniRate (Player {ability = (Just (DoingAbility {ended = Nothing, dability = abi}), _), animation = (Animation {frames = fs}, _)}) = case chargeLen abi `div` fromIntegral fs of
 			0 -> 1
 			r -> 1000 `div` r
+		playerAniRate (Player {ability = (Just (DoingAbility {ended = (Just _), dability = Block {}}), _)}) = 1
 		playerAniRate (Player {ability = (Just (DoingAbility {ended = (Just _), dability = abi}), _), animation = (Animation {frames = fs}, _)}) = case releaseLen abi `div` fromIntegral fs of
 			0 -> 1
 			r -> 1000 `div` r
@@ -281,7 +280,7 @@ splitDirection  S = [S]
 splitDirection SE = [S,E]
 
 knockedBack :: Ticks -> H.Vector -> DoingAbility
-knockedBack now v = DoingAbility "fall" (Block Nothing 0 1 400 0 v Nothing) now (Just now)
+knockedBack now v = DoingAbility "fall" (Block 400 0 v Nothing 1) now (Just now)
 
 directionToRadians :: Direction -> H.Angle
 directionToRadians d = (factor * pi) / 4
@@ -292,6 +291,7 @@ getKeyAction :: Control -> SDLKey -> Maybe KeyboardAction
 getKeyAction (KeyboardControl c) keysym = lookup keysym c
 
 doingAbilityState :: DoingAbility -> AbilityState
+doingAbilityState (DoingAbility {dability = Block{}}) = AbilityCharge
 doingAbilityState (DoingAbility {ended = Nothing}) = AbilityCharge
 doingAbilityState (DoingAbility {ended = Just _}) = AbilityRelease
 
@@ -321,6 +321,10 @@ updateAnimation ticks p = p {animation = second (const ticks) $ first (const $ s
 isEnergy :: Item -> Bool
 isEnergy (Energy {}) = True
 --isEnergy _ = False
+
+isBlock :: Ability -> Bool
+isBlock (Block {}) = True
+isBlock _ = False
 
 randomLocation :: IO H.Vector
 randomLocation = do
@@ -528,26 +532,41 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 				else
 					return p
 		) projectiles
-	doAbility ticks p@(Player {ability = (Just (DoingAbility _ a s (Just e)), nextAbility)})
+	setupNextAbility ticks nextAbility = (\a ->
+			a {
+				started = ticks,
+				ended = (\e -> ticks + (e - started a)) `fmap` ended a
+			}
+		) `fmap` nextAbility
+	maybePlaySound (Just snd) = do
+		let s = sounds ! snd
+		_ <- SDL.Mixer.playChannel (-1) s 0
+		return ()
+	maybePlaySound _ = return ()
+	ratioFromLen a s e =
+			let len = fromIntegral $ toInteger e - toInteger s in
+			(if len < 1 then (1::Double) else len) / fromIntegral (chargeLen a)
+	costFromRatio a ratio =
+			floor $ minimum [fromIntegral $ energyCost a, fromIntegral (energyCost a) * ratio]
+	commonAbility ticks p a cost nextAbility = do
+			maybePlaySound (sound a)
+			let nextAbility' = setupNextAbility ticks nextAbility
+			return $ updateAnimation ticks $ p {energy = maximum [0, energy p - cost], ability = (nextAbility', Nothing) }
+	doAbility ticks p@(Player {ability = (Just a@(DoingAbility _ (Block {maxDuration = d}) s Nothing), nxt)})
+		| (toInteger ticks - toInteger s) >= toInteger d =
+			return (p {ability = (Just (a {ended = Just ticks}),nxt)}, Nothing)
+	doAbility ticks p@(Player {ability = (Just (DoingAbility _ a@(Block {}) s (Just e)), nextAbility)}) = do
+			let cost = costFromRatio a $ ratioFromLen a s e
+			p' <- commonAbility ticks p a cost nextAbility
+
+			return (p', Nothing)
+	doAbility ticks p@(Player {ability = (Just (DoingAbility _ a@(Attack {}) s (Just e)), nextAbility)})
 		| (toInteger ticks - toInteger e) >= toInteger (releaseLen a) = do
-			let len = fromIntegral $ toInteger e - toInteger s
-			let ratio = (if len < 1 then (1::Double) else len) / fromIntegral (chargeLen a)
+			let ratio = ratioFromLen a s e
 			let duration = floor $ minimum [fromIntegral $ maxDuration a, fromIntegral (maxDuration a) * ratio]
-			let cost = floor $ minimum [fromIntegral $ energyCost a, fromIntegral (energyCost a) * ratio]
+			let cost = costFromRatio a ratio
 
-			let nextAbility' = (\a ->
-					a {
-						started = ticks,
-						ended = (\e -> ticks + (e - started a)) `fmap` ended a
-					}
-				) `fmap` nextAbility
-
-			let p' = updateAnimation ticks $ p {energy = maximum [0, energy p - cost], ability = (nextAbility', Nothing) }
-
-			when (isJust $ sound a) $ do
-				let s = sounds ! fromJust (sound a)
-				_ <- SDL.Mixer.playChannel (-1) s 0
-				return ()
+			p' <- commonAbility ticks p a cost nextAbility
 
 			case a of
 				(Attack {}) -> do
@@ -598,19 +617,21 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 						pr <- filterM (get' ((==prshp) . pshape)) =<< filterM (get' (isNothing . deathPos)) mutableProjectiles
 						case pr of
 							[pr] -> do
-								-- Projectile has hit so player is damaged
+								initialPlayer <- get pl
 								projectile <- get pr
-								pl $~ (\player -> player {damageAmt = damageAmt player + damage projectile})
-								(elim, player) <- maybeEliminate =<< get pl
-								if elim then
-										pl $= player
-									else do
-										v <- get $ H.velocity $ H.body $ pshape projectile
-										case fromIntegral $ knockback projectile of
-											0     ->
-												pl $= updateAnimation ticks (player { speed = 0, ability = (Nothing, Nothing) })
-											knock ->
-												pl $= updateAnimation ticks (player { speed = 0, ability = (Just $ knockedBack ticks (H.scale (H.normalize v) knock), Nothing) })
+								unless ((isBlock `fmap` dability `fmap` fst (ability initialPlayer)) == Just True) $ do
+									-- Projectile has hit so player is damaged
+									pl $~ (\player -> player {damageAmt = damageAmt player + damage projectile})
+									(elim, player) <- maybeEliminate =<< get pl
+									if elim then
+											pl $= player
+										else do
+											v <- get $ H.velocity $ H.body $ pshape projectile
+											case fromIntegral $ knockback projectile of
+												0     ->
+													pl $= updateAnimation ticks (player { speed = 0, ability = (Nothing, Nothing) })
+												knock ->
+													pl $= updateAnimation ticks (player { speed = 0, ability = (Just $ knockedBack ticks (H.scale (H.normalize v) knock), Nothing) })
 
 								-- Projectile has hit, so it is gone
 								pos <- get $ H.position $ H.body $ pshape projectile
@@ -762,16 +783,29 @@ player_parser = do
 			abi <- option Nothing (fmap Just ability)
 			case abi of
 				Nothing -> fmap SimpleAnimation directed_animations
-				Just a -> skipSpace >> sub_attacks a
+				Just a -> return a
 			)
 		return (T.unpack key, aniSet)
-	ability = do
+	ability = attack <|> block
+	block = do
+		constStr "block"
+		maxDuration <- ws_int
+		energyCost <- ws_int
+		vx <- fromIntegral `fmap` (ws_int :: Parser Int)
+		vy <- fromIntegral `fmap` (ws_int :: Parser Int)
+		sound <- option Nothing (fmap Just abisound)
+		skipSpace
+		(d, (_, anis)) <- sub_attack "charge" AbilityCharge
+		let b = Block maxDuration energyCost (H.Vector vx vy) sound d
+		return $ AbilityAnimation b (Map.fromList [(AbilityCharge,anis)])
+	attack = do
 		constStr "attack"
 		maxDamage <- ws_int
 		maxKnockback <- ws_int
 		energyCost <- ws_int
 		sound <- option Nothing (fmap Just abisound)
-		return (Attack maxDamage maxKnockback energyCost sound)
+		skipSpace
+		sub_attacks (Attack maxDamage maxKnockback energyCost sound)
 	abisound = do
 		skipSpace
 		constStr "sound"
