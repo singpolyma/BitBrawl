@@ -326,7 +326,11 @@ randomLocation :: IO H.Vector
 randomLocation = do
 	x <- getStdRandom (randomR (32,windowWidth-32))
 	y <- getStdRandom (randomR (-64,-windowHeight))
-	return (H.Vector x y)
+	-- Do not spawn in lava
+	if x > 100 && x < 250 && y > 522 then
+			randomLocation
+		else
+			return (H.Vector x y)
 
 deathChance :: Int -> Int -> Int
 deathChance d e
