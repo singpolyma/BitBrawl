@@ -929,9 +929,9 @@ startGame menuMusic win fonts sounds mapImage tree controls = do
 		) (zip [1..] (reverse controls))
 
 	orbPath <- fmap head $ findDataFiles ((=="orb.png") . takeFileName)
-	orb <- SDL.load orbPath
+	orb <- SDL.displayFormatAlpha =<< SDL.load orbPath
 	let energyPellet = Energy (orb, Animation 0 4 0 0, 0) 10 undefined
-	
+
 	switchMusic (music $ head players)
 	touchForeignPtr menuMusic
 	gameLoop win fonts sounds mapImage tree startTicks [energyPellet] (control $ head players) (Space gameSpace startTicks 0) players [] []
@@ -1098,14 +1098,14 @@ main = withExternalLibs $ do
 	let fonts = Map.fromList [("menu", menuFont), ("stats", statsFont)]
 
 	mapPath <- fmap head $ findDataFiles ((=="map.png") . takeFileName)
-	mapImage <- SDL.load mapPath
+	mapImage <- SDL.displayFormat =<< SDL.load mapPath
 
 	treePath <- fmap head $ findDataFiles ((=="witheredtree.png") . takeFileName)
-	tree <- SDL.load treePath
+	tree <- SDL.displayFormatAlpha =<< SDL.load treePath
 
 	pcs <- findDataFiles ((==".player") . takeExtension) >>= mapM (\p -> do
 			Right (name,music,anis) <- fmap (parseOnly player_parser) $ T.readFile p
-			sprites <- SDL.load $ replaceExtension p "png"
+			sprites <- SDL.displayFormatAlpha =<< SDL.load (replaceExtension p "png")
 			mpth <- fmap head $ findDataFiles ((==music) . takeFileName)
 			m <- SDL.Mixer.loadMUS mpth
 			return (name, anis, sprites, m)
