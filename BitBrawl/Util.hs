@@ -1,7 +1,6 @@
 module BitBrawl.Util where
 
-import Control.Concurrent (forkIO, threadDelay)
-import Control.Monad (filterM, void)
+import Control.Monad (filterM)
 import Data.Maybe (fromMaybe)
 import Data.Word (Word32)
 import Graphics.UI.SDL.Keysym (SDLKey)
@@ -49,12 +48,3 @@ zeroPad n s = replicate (n - length s) '0' ++ s
 timesLoop :: (Integral a, Monad m) => a -> m a1 -> m ()
 timesLoop 0 _ = return ()
 timesLoop n f = f >> (n-1) `timesLoop` f
-
-forkIO_ :: IO a -> IO ()
-forkIO_ f = void $ forkIO $ void f
-
-timer :: Int -> IO a -> IO ()
-timer t f = do
-	_ <- f
-	threadDelay (t*1000) -- Make it milliseconds
-	timer t f

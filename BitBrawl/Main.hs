@@ -5,7 +5,7 @@ import Control.Arrow
 import Control.Concurrent
 import Control.Applicative
 import Control.Monad.IO.Class
-import Foreign (nullPtr, touchForeignPtr, finalizeForeignPtr)
+import Foreign (touchForeignPtr, finalizeForeignPtr)
 import Data.Ord
 import Data.Char hiding (Space)
 import Data.List
@@ -33,6 +33,7 @@ import qualified Physics.Hipmunk as H
 import BitBrawl.Animation
 import BitBrawl.Colour
 import BitBrawl.SDLgfx
+import BitBrawl.SDL
 import BitBrawl.Util
 
 type DirectedAnimations = Map Direction Animation
@@ -391,62 +392,67 @@ winScreen win fonts players = do
 	where
 	sortedPlayers = sortBy (comparing deaths) players
 	pause = do
-		e <- SDL.waitEvent
+		e <- SDL.waitEventBlocking
 		case e of
 			SDL.KeyDown _ -> return ()
 			SDL.Quit -> return ()
 			_ -> pause
 
 gameLoop :: SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> SDL.Surface -> Ticks -> [Item] -> H.Body -> Space -> [Player] -> [Projectile] -> [Item] -> IO ()
-gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpace players projectiles items = do
-	e <- SDL.waitEvent -- Have to use the expensive wait so timer works
-	ticks <- SDL.getTicks
-	case e of
-		SDL.User SDL.UID0 _ _ _
-			| timeLimit - toInteger (ticks - startTicks) < 1000 ->
-				winScreen win fonts players
-			| otherwise -> do
-				projectiles' <- doProjectiles ticks
-				(players', newProjectiles) <- doAbilities players ticks
-				let projectiles'' = projectiles' ++ newProjectiles
-				(gameSpace', players'', projectiles''', items') <- doPhysics ticks projectiles'' players'
-				(players''', projectiles'''', items'') <- doDrawing ticks players'' projectiles''' items'
-
-				newEnergy <- getStdRandom (randomR (0,energyDropTime `div` frameTime)) :: IO Int
-				items''' <- if newEnergy == 1 then do
-						let Just (Energy {
-								itemAnimation = (sprites,ani,_),
-								energyBonus = bonus
-							}) = find isEnergy possibleItems
-						body <- H.newBody H.infinity H.infinity
-						shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
-
-						let energy = Energy (sprites,ani,ticks) bonus shp
-
-						newPos <- randomLocation
-						H.position body $= newPos
-
-						H.collisionType shp $= collisionType energy
-						let (Space hSpace _ _) = gameSpace in H.spaceAdd hSpace shp
-
-						return (energy:items'')
-					else
-						return items''
-
-				let winner' = minimumBy (comparing deaths) players
-				unless (winner == control winner') (switchMusic (music winner'))
-
-				next (control winner') gameSpace' players''' projectiles'''' items'''
-
-		SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) ->
-			next winner gameSpace (handleKeyboard ticks KeyDown keysym) projectiles items
-		SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
-			next winner gameSpace (handleKeyboard ticks KeyUp keysym) projectiles items
-
-		SDL.Quit -> return ()
-		_ -> next winner gameSpace players projectiles items
+gameLoop win fonts sounds mapImage tree startTicks possibleItems winner' gameSpace' players' projectiles' items' =
+	loop (Nothing, (0,startTicks)) startTicks players' projectiles' items' winner' gameSpace'
 	where
-	next = gameLoop win fonts sounds mapImage tree startTicks possibleItems
+	loop (Nothing, (_,lastTime)) ticks players projectiles items winner gameSpace
+		| timeLimit - toInteger (ticks - startTicks) < 1000 =
+			winScreen win fonts players
+		| otherwise = do
+			projectiles' <- doProjectiles projectiles ticks
+			(players', newProjectiles) <- doAbilities players ticks gameSpace
+			let projectiles'' = projectiles' ++ newProjectiles
+			(gameSpace', players'', projectiles''', items') <- doPhysics ticks projectiles'' players' items gameSpace
+			(players''', projectiles'''', items'') <- doDrawing ticks players'' projectiles''' items' gameSpace'
+
+			newEnergy <- getStdRandom (randomR (0,energyDropTime `div` frameTime)) :: IO Int
+			items''' <- if newEnergy == 1 then do
+					let Just (Energy {
+							itemAnimation = (sprites,ani,_),
+							energyBonus = bonus
+						}) = find isEnergy possibleItems
+					body <- H.newBody H.infinity H.infinity
+					shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
+
+					let energy = Energy (sprites,ani,ticks) bonus shp
+
+					newPos <- randomLocation
+					H.position body $= newPos
+
+					H.collisionType shp $= collisionType energy
+					let (Space hSpace _ _) = gameSpace in H.spaceAdd hSpace shp
+
+					return (energy:items'')
+				else
+					return items''
+
+			let winner' = minimumBy (comparing deaths) players
+			unless (winner == control winner') (switchMusic (music winner'))
+
+			next (frameTime,lastTime) players''' projectiles'''' items''' (control winner') gameSpace'
+
+	loop (Just (SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym})), ticksLeft) ticks players projectiles items winner gameSpace =
+		next ticksLeft (handleKeyboard ticks players KeyDown keysym) projectiles items winner gameSpace
+
+	loop (Just (SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym})), ticksLeft) ticks players projectiles items winner gameSpace =
+		next ticksLeft (handleKeyboard ticks players KeyUp keysym) projectiles items winner gameSpace
+
+	loop (Just SDL.Quit, _) _ _ _ _ _ _ = return ()
+
+	loop (_, ticksLeft) _ players projectiles items winner gameSpace =
+		next ticksLeft players projectiles items winner gameSpace
+
+	next ticksLeft pl pr it w s = do
+		e <- waitEventTimeout ticksLeft
+		ticks <- SDL.getTicks
+		loop e ticks pl pr it w s
 
 	handleAction ticks (Face d) p = updateAnimation ticks $ p {direction = d}
 	handleAction ticks (Go s) p = updateAnimation ticks $ p {speed = s}
@@ -470,7 +476,7 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 			(Just a, Just b) -> p {ability = (Just a, if isJust doing then doing else Just b)}
 			_ -> error "Programmer error"
 
-	handleKeyboard ticks keystate keysym =
+	handleKeyboard ticks players keystate keysym =
 		map (\player ->
 			foldr (handleAction ticks) player (
 				comboKeyboard player keystate $ getKeyAction (controls player) keysym
@@ -524,9 +530,9 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 		H.velocity (control player) $= case ability player of
 			(Just (DoingAbility {dability = Block {velocity = v}}), _) -> v
 			_ -> H.Vector (speed player) 0 `H.rotate` d
-	doProjectiles ticks =
+	doProjectiles projectiles ticks =
 		mapM (\p -> do
-			let dead = ticks > life p 
+			let dead = ticks > life p
 			if dead && isNothing (deathPos p) then do
 					pos <- get $ H.position $ H.body $ pshape p
 					vel <- get $ H.velocity $ H.body $ pshape p
@@ -554,15 +560,15 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 			maybePlaySound (sound a)
 			let nextAbility' = setupNextAbility ticks nextAbility
 			return $ updateAnimation ticks $ p {energy = maximum [0, energy p - cost], ability = (nextAbility', Nothing) }
-	doAbility ticks p@(Player {ability = (Just a@(DoingAbility _ (Block {maxDuration = d}) s Nothing), nxt)})
+	doAbility ticks _ p@(Player {ability = (Just a@(DoingAbility _ (Block {maxDuration = d}) s Nothing), nxt)})
 		| (toInteger ticks - toInteger s) >= toInteger d =
 			return (p {ability = (Just (a {ended = Just ticks}),nxt)}, Nothing)
-	doAbility ticks p@(Player {ability = (Just (DoingAbility _ a@(Block {}) s (Just e)), nextAbility)}) = do
+	doAbility ticks _ p@(Player {ability = (Just (DoingAbility _ a@(Block {}) s (Just e)), nextAbility)}) = do
 			let cost = costFromRatio a $ ratioFromLen a s e
 			p' <- commonAbility ticks p a cost nextAbility
 
 			return (p', Nothing)
-	doAbility ticks p@(Player {ability = (Just (DoingAbility _ a@(Attack {}) s (Just e)), nextAbility)})
+	doAbility ticks (Space hSpace _ _) p@(Player {ability = (Just (DoingAbility _ a@(Attack {}) s (Just e)), nextAbility)})
 		| (toInteger ticks - toInteger e) >= toInteger (releaseLen a) = do
 			let ratio = ratioFromLen a s e
 			let duration = floor $ minimum [fromIntegral $ maxDuration a, fromIntegral (maxDuration a) * ratio]
@@ -590,19 +596,17 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 					H.collisionType shp $= collisionType newProjectile
 					H.layers shp $= collisionLayers newProjectile
 
-					let (Space s _ _) = gameSpace
-					H.spaceAdd s body
-					H.spaceAdd s shp
+					H.spaceAdd hSpace body
+					H.spaceAdd hSpace shp
 
 					return (p', Just newProjectile)
 				_ ->
 					return (p', Nothing)
-	doAbility _ p = return (p, Nothing)
-	doAbilities players ticks =
-		second catMaybes `fmap` unzip `fmap` mapM (doAbility ticks) players
-	doPhysics ticks projectiles players = do
+	doAbility _ _ p = return (p, Nothing)
+	doAbilities players ticks gameSpace =
+		second catMaybes `fmap` unzip `fmap` mapM (doAbility ticks gameSpace) players
+	doPhysics ticks projectiles players items (Space hSpace spaceTicks dtRemainder) = do
 		mapM_ setPlayerVelocity players
-		let (Space hSpace spaceTicks dtRemainder) = gameSpace
 
 		mutablePlayers <- mapM newIORef players
 		mutableProjectiles <- mapM newIORef projectiles
@@ -681,10 +685,12 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 		items' <- catMaybes `fmap` mapM get mutableItems
 
 		return (Space hSpace ticks (time `mod` frameTime), players', projectiles', items')
+
 	advanceAndDrawByZ ds ticks = do
 		let ds' = map (`advance` ticks) ds
 		drawByZ win ds'
 		return ds'
+
 	drawPlayerStat offset w h player = do
 		group <- fmap fromIntegral $ get $ H.group $ shape player
 		let xadj = if deaths player < 10 then w `div` 2 else 0
@@ -694,22 +700,15 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 		True <- SDL.fillRect win (jRect (sx-2) (sy-2) (w+4) (h+4)) c
 		True <- SDL.blitSurface deaths Nothing win (jRect (sx+xadj) sy 0 0)
 		return ()
-	doDrawing ticks players projectiles items = do
-		-- We don't know where the players were before. Erase whole screen
-		True <- SDL.blitSurface mapImage Nothing win (jRect 0 0 0 0)
 
-		items' <- advanceAndDrawByZ items ticks
-		players' <- advanceAndDrawByZ players ticks
-		projectiles' <- advanceAndDrawByZ projectiles ticks
-
+	drawDeaths players = do
 		(w, h) <- SDL.TTF.utf8Size (fonts ! "stats") "00"
 		(offset, _) <- SDL.TTF.utf8Size (fonts ! "stats") "Deaths  "
 		label <- SDL.TTF.renderUTF8Blended (fonts ! "stats") "Deaths  " (SDL.Color 0xff 0 0)
 		True <- SDL.blitSurface label Nothing win (jRect 10 h 0 0)
 		mapM_ (drawPlayerStat (offset+10) w h) players
 
-		True <- SDL.blitSurface tree Nothing win (jRect (19*32) (10*32) 0 0)
-
+	drawClock ticks = do
 		let minutes = (timeLimit - (ticks - startTicks)) `div` (1000*60)
 		let seconds = ((timeLimit - (ticks - startTicks)) `div` 1000) - (minutes*60)
 		let clockS = zeroPad 2 (show minutes) ++ ":" ++ zeroPad 2 (show seconds)
@@ -717,15 +716,26 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner gameSpac
 		clock <- SDL.TTF.renderUTF8Blended (fonts ! "stats") clockS (SDL.Color 0xff 0xff 0xff)
 		let centre = (windowWidth `div` 2) - (w `div` 2)
 		True <- SDL.blitSurface clock Nothing win (jRect centre 5 0 0)
+		return ()
+
+	doDrawing ticks players projectiles items (Space s _ _ ) = do
+		-- We don't know where the players were before. Erase whole screen
+		True <- SDL.blitSurface mapImage Nothing win (jRect 0 0 0 0)
+
+		items' <- advanceAndDrawByZ items ticks
+		players' <- advanceAndDrawByZ players ticks
+		projectiles' <- advanceAndDrawByZ projectiles ticks
+
+		True <- SDL.blitSurface tree Nothing win (jRect (19*32) (10*32) 0 0)
+
+		drawDeaths players
+		drawClock ticks
 
 		let (projectiles'', deadProjectiles) = partition (\proj ->
 				not (isJust (deathPos proj) && isNothing (pani proj))
 			) projectiles'
 
-		mapM_ (\p -> do
-				let (Space s _ _) = gameSpace
-				H.spaceRemove s (pshape p)
-			) deadProjectiles
+		mapM_ (H.spaceRemove s . pshape) deadProjectiles
 
 		SDL.flip win
 		return (players', projectiles'', items')
@@ -949,7 +959,8 @@ startGame menuMusic win fonts sounds mapImage tree controls = do
 playerJoinLoop :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> SDL.Surface -> [(String, Animations, SDL.Surface, SDL.Mixer.Music)] -> IO ()
 playerJoinLoop menuMusic win fonts sounds mapImage tree pcs = do
 	switchMusic menuMusic
-	loop Nothing 0 kActions [emptyPC]
+	now <- SDL.getTicks
+	loop (Nothing, (frameTime,now)) Nothing 0 kActions [emptyPC]
 	where
 	emptyPC = (0, KeyboardControl [])
 	menuFont = fonts ! "menu"
@@ -965,32 +976,40 @@ playerJoinLoop menuMusic win fonts sounds mapImage tree pcs = do
 	kActionString KStart = "START"
 	kActionString KSelect = "SELECT"
 	kActionString _ = "???"
-	loop keyDown downFor aLeft controls = do
-		e <- SDL.waitEvent -- Have to use the expensive wait so timer works
-		case e of
-			SDL.User SDL.UID0 _ _ _ ->
-				onTimer keyDown downFor aLeft controls
-			SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym}) -> do
-				let (existing, controls') = foldr (\(p,c) (done, xs) ->
-						case getKeyAction c keysym of
-							(Just (KFace E)) -> (IgnoreControl, ((p+1) `mod` length pcs,c):xs)
-							(Just (KFace W)) -> (IgnoreControl, ((p + length pcs - 1) `mod` length pcs,c):xs)
-							(Just KStart) -> (STARTControl, (p,c):xs)
-							(Just KSelect) -> (IgnoreControl, emptyPC:xs)
-							(Just _) -> (IgnoreControl, (p,c):xs)
-							_ -> (done, (p,c):xs)
-					) (AddControl, []) controls
-				let aLeft'
-					| snd (head controls') /= snd (head controls) = kActions
-					| otherwise = aLeft
-				case existing of
-					AddControl -> loop (Just keysym) 0 aLeft' controls'
-					IgnoreControl -> loop Nothing 0 aLeft' controls'
-					STARTControl -> startGame menuMusic win fonts sounds mapImage tree (tail $ map (first (pcs!!)) controls)
-			SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym}) ->
-				loop (if Just keysym == keyDown then Nothing else keyDown) 0 aLeft controls
-			SDL.Quit -> return ()
-			_ -> loop keyDown downFor aLeft controls
+
+	next ticksLeft keyDown downFor aLeft controls = do
+		e <- waitEventTimeout ticksLeft
+		loop e keyDown downFor aLeft controls
+
+	loop (Nothing, (_, lastTime)) keyDown downFor aLeft controls =
+		onTimer keyDown downFor aLeft controls lastTime
+
+	loop (Just (SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym})), ticksLeft) _ _ aLeft controls = do
+		let (existing, controls') = foldr (\(p,c) (done, xs) ->
+				case getKeyAction c keysym of
+					(Just (KFace E)) -> (IgnoreControl, ((p+1) `mod` length pcs,c):xs)
+					(Just (KFace W)) -> (IgnoreControl, ((p + length pcs - 1) `mod` length pcs,c):xs)
+					(Just KStart) -> (STARTControl, (p,c):xs)
+					(Just KSelect) -> (IgnoreControl, emptyPC:xs)
+					(Just _) -> (IgnoreControl, (p,c):xs)
+					_ -> (done, (p,c):xs)
+			) (AddControl, []) controls
+		let aLeft'
+			| snd (head controls') /= snd (head controls) = kActions
+			| otherwise = aLeft
+		case existing of
+			AddControl -> next ticksLeft (Just keysym) 0 aLeft' controls'
+			IgnoreControl -> next ticksLeft Nothing 0 aLeft' controls'
+			STARTControl -> startGame menuMusic win fonts sounds mapImage tree (tail $ map (first (pcs!!)) controls)
+
+
+	loop (Just (SDL.KeyUp (SDL.Keysym {SDL.symKey = keysym})), ticksLeft) keyDown _ aLeft controls =
+		next ticksLeft (if Just keysym == keyDown then Nothing else keyDown) 0 aLeft controls
+
+	loop (Just SDL.Quit, _) _ _ _ _ = return ()
+
+	loop (_, ticksLeft) keyDown downFor aLeft controls = next ticksLeft keyDown downFor aLeft controls
+
 	barWidth downFor = minimum [windowWidth-20, ((windowWidth-20) * downFor) `div` 10]
 	addBinding b (KeyboardControl c) = KeyboardControl (b:c)
 	drawText x y font string color = do
@@ -1044,7 +1063,7 @@ playerJoinLoop menuMusic win fonts sounds mapImage tree pcs = do
 				drawText nx (y+labelH+64+3) menuFont name (SDL.Color 0xff 0xff 0xff)
 			) (zip [0..] (reverse controls))
 		return labelH
-	onTimer (Just keysym) downFor (a:aLeft) ((p,c):controls) = do
+	onTimer (Just keysym) downFor (a:aLeft) ((p,c):controls) lastTime = do
 		red <- color2pixel win $ SDL.Color 0xff 0 0
 		True <- SDL.blitSurface mapImage Nothing win (jRect 0 0 0 0) -- erase screen
 
@@ -1059,18 +1078,19 @@ playerJoinLoop menuMusic win fonts sounds mapImage tree pcs = do
 		if downFor > 10 then
 				let cs = (p,addBinding (keysym, a) c):controls in
 				if null aLeft then
-					loop Nothing 0 kActions (emptyPC:cs)
+					next (frameTime, lastTime) Nothing 0 kActions (emptyPC:cs)
 				else
-					loop Nothing 0 aLeft cs
+					next (frameTime, lastTime) Nothing 0 aLeft cs
 			else
-				loop (Just keysym) (downFor+1) (a:aLeft) ((p,c):controls)
+				next (frameTime, lastTime) (Just keysym) (downFor+1) (a:aLeft) ((p,c):controls)
 
-	onTimer keyDown downFor (a:aLeft) controls = do
+	onTimer keyDown downFor (a:aLeft) controls lastTime = do
 		True <- SDL.blitSurface mapImage Nothing win (jRect 0 0 0 0) -- erase screen
 		_ <- drawLabelAndPlayers a (tail controls)
 		SDL.flip win
-		loop keyDown (downFor+1) (a:aLeft) controls
-	onTimer _ _ _ _ = error "Programmer error"
+		next (frameTime, lastTime) keyDown (downFor+1) (a:aLeft) controls
+
+	onTimer _ _ _ _ _ = error "Programmer error"
 
 withExternalLibs :: IO a -> IO ()
 withExternalLibs f = SDL.withInit [SDL.InitEverything] $ do
@@ -1086,7 +1106,6 @@ withExternalLibs f = SDL.withInit [SDL.InitEverything] $ do
 
 main :: IO ()
 main = withExternalLibs $ do
-	forkIO_ $ timer frameTime (SDL.tryPushEvent $ SDL.User SDL.UID0 0 nullPtr nullPtr)
 	win <- SDL.setVideoMode windowWidth windowHeight 16 [SDL.HWSurface,SDL.HWAccel,SDL.AnyFormat,SDL.DoubleBuf]
 
 	menuFontPath <- fmap head $ findDataFiles ((=="PortLligatSans-Regular.ttf") . takeFileName)
