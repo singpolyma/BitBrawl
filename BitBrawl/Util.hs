@@ -48,3 +48,7 @@ zeroPad n s = replicate (n - length s) '0' ++ s
 timesLoop :: (Integral a, Monad m) => a -> m a1 -> m ()
 timesLoop 0 _ = return ()
 timesLoop n f = f >> (n-1) `timesLoop` f
+
+headMsg :: String -> [a] -> a
+headMsg _ (x:_) = x
+headMsg msg _ = error msg

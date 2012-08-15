@@ -266,6 +266,10 @@ findDataFiles f = do
 	where
 	dirContents x = mapM (canonicalizePath  . normalise . (x </>)) =<< getDirectoryContents x
 
+findDataFile' :: FilePath -> IO FilePath
+findDataFile' name = headMsg ("Could not find data file: "++name) `fmap`
+	findDataFiles ((==name) . takeFileName)
+
 switchMusic :: SDL.Mixer.Music -> IO ()
 switchMusic music = do
 	_ <- SDL.Mixer.tryFadeOutMusic 1000
@@ -938,7 +942,7 @@ startGame menuMusic win fonts sounds mapImage tree controls = do
 			newPlayer gameSpace sprites music anis c startTicks 10 i
 		) (zip [1..] (reverse controls))
 
-	orbPath <- fmap head $ findDataFiles ((=="orb.png") . takeFileName)
+	orbPath <- findDataFile' "orb.png"
 	orb <- SDL.displayFormatAlpha =<< SDL.load orbPath
 	let energyPellet = Energy (orb, Animation 0 4 0 0, 0) 10 undefined
 
@@ -1108,18 +1112,18 @@ main :: IO ()
 main = withExternalLibs $ do
 	win <- SDL.setVideoMode windowWidth windowHeight 16 [SDL.HWSurface,SDL.HWAccel,SDL.AnyFormat,SDL.DoubleBuf]
 
-	menuFontPath <- fmap head $ findDataFiles ((=="PortLligatSans-Regular.ttf") . takeFileName)
+	menuFontPath <- findDataFile' "PortLligatSans-Regular.ttf"
 	menuFont <- SDL.TTF.openFont menuFontPath 20
 
-	numberFontPath <- fmap head $ findDataFiles ((=="CevicheOne-Regular.ttf") . takeFileName)
+	numberFontPath <- findDataFile' "CevicheOne-Regular.ttf"
 	statsFont <- SDL.TTF.openFont numberFontPath 30
 
 	let fonts = Map.fromList [("menu", menuFont), ("stats", statsFont)]
 
-	mapPath <- fmap head $ findDataFiles ((=="map.png") . takeFileName)
+	mapPath <- findDataFile' "map.png"
 	mapImage <- SDL.displayFormat =<< SDL.load mapPath
 
-	treePath <- fmap head $ findDataFiles ((=="witheredtree.png") . takeFileName)
+	treePath <- findDataFile' "witheredtree.png"
 	tree <- SDL.displayFormatAlpha =<< SDL.load treePath
 
 	pcs <- findDataFiles ((==".player") . takeExtension) >>= mapM (\p -> do
@@ -1129,6 +1133,8 @@ main = withExternalLibs $ do
 			m <- SDL.Mixer.loadMUS mpth
 			return (name, anis, sprites, m)
 		)
+
+	when (null pcs) $ fail "No *.player files found"
 
 	let sounds = mapMaybe (\a -> case a of
 			AbilityAnimation abi _ -> sound abi
@@ -1142,7 +1148,7 @@ main = withExternalLibs $ do
 		) sounds
 
 
-	menuMusicPath <- fmap head $ findDataFiles ((=="menu.ogg") . takeFileName)
+	menuMusicPath <- findDataFile' "menu.ogg"
 	menuMusic <- SDL.Mixer.loadMUS menuMusicPath
 
 	playerJoinLoop menuMusic win fonts soundsMap mapImage tree pcs
