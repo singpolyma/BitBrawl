@@ -16,6 +16,7 @@ import System.FilePath
 import System.Directory
 import Data.StateVar
 import Data.Attoparsec.Text
+import Data.Lens.Common
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -35,92 +36,7 @@ import BitBrawl.Colour
 import BitBrawl.SDLgfx
 import BitBrawl.SDL
 import BitBrawl.Util
-
-type DirectedAnimations = Map Direction Animation
-type Animations = Map String AnimationSet
-
-data Direction = E | NE | N | NW | W | SW | S | SE deriving (Show, Read, Enum, Ord, Eq)
-
-data Item = Energy {
-		itemAnimation :: (SDL.Surface, Animation, Ticks),
-		energyBonus   :: Int,
-		itemShape     :: H.Shape
-	}
-	deriving (Eq)
-
-data Projectile = Projectile {
-		pani      :: Maybe (Animation, Ticks, Ticks),
-		damage    :: Int,
-		knockback :: Int,
-		pshape    :: H.Shape,
-		life      :: Ticks,
-		pplayer   :: Player,
-		deathPos  :: Maybe (H.Vector, H.Vector)
-	}
-	deriving (Eq)
-
-data AnimationSet =
-	SimpleAnimation DirectedAnimations |
-	AbilityAnimation Ability (Map AbilityState DirectedAnimations)
-	deriving (Show, Eq)
-
-data AbilityState = AbilityCharge | AbilityRelease deriving (Show, Read, Eq, Ord, Enum)
-
-data Ability = Attack {
-		maxDamage      :: Int,
-		maxKnockback   :: Int,
-		energyCost     :: Int,
-		sound          :: Maybe String,
-		chargeLen      :: Ticks,
-		releaseLen     :: Ticks,
-		maxDuration    :: Ticks,
-		projectileAnis :: Maybe (DirectedAnimations, Ticks)
-	} |
-	Block {
-		maxDuration    :: Ticks,
-		energyCost     :: Int,
-		velocity       :: H.Vector,
-		sound          :: Maybe String,
-		chargeLen      :: Ticks
-	}
-	deriving (Show, Eq)
-
-data DoingAbility = DoingAbility {
-		abiname  :: String,
-		dability :: Ability,
-		started  :: Ticks,
-		ended    :: Maybe Ticks
-	}
-	deriving (Show, Eq)
-
-data Player = Player {
-		color      :: SDL.Color,
-		sprites    :: SDL.Surface,
-		music      :: SDL.Mixer.Music,
-		shape      :: H.Shape,
-		control    :: H.Body,
-		controls   :: Control,
-		animation  :: (Animation, Ticks),
-		animations :: Animations,
-		ability    :: (Maybe DoingAbility, Maybe DoingAbility),
-		direction  :: Direction,
-		speed      :: Speed,
-		energy     :: Int,
-		damageAmt  :: Int,
-		deaths     :: Int
-	}
-	deriving (Eq)
-
-data KeyboardAction = KFace Direction | KAbility1 | KAbility2 | KAbility3 | KAbility4 | KStart | KSelect deriving (Show, Read, Eq)
-
-data Action = Face Direction | Go Speed | Ability String | EndAbility deriving (Show, Read, Eq)
-
-data ExistingControl = IgnoreControl | AddControl | STARTControl
-
-data KeyState = KeyDown | KeyUp deriving (Show, Read, Enum, Ord, Eq)
-data Control = KeyboardControl [(SDLKey, KeyboardAction)] deriving (Show, Eq)
-
-data Space = Space H.Space Ticks Ticks
+import BitBrawl.Types
 
 class CollisionLayers a where
 	collisionLayers :: a -> H.Layers
@@ -145,6 +61,9 @@ instance CollisionType Projectile where
 
 instance CollisionType Item where
 	collisionType _ = 3
+
+instance (CollisionType a) => CollisionType [a] where
+	collisionType = collisionType . head
 
 class Drawable a where
 	position :: a -> IO (Int, Int)
@@ -288,6 +207,13 @@ splitDirection SE = [S,E]
 knockedBack :: Ticks -> H.Vector -> DoingAbility
 knockedBack now v = DoingAbility "fall" (Block 400 0 v Nothing 1) now (Just now)
 
+setCollisionBegin :: (CollisionType a, CollisionType b) => H.Space -> a -> b -> (H.Shape -> H.Shape -> IO Bool) -> IO ()
+setCollisionBegin space typeOf1 typeOf2 callback =
+	H.addCollisionHandler space (collisionType typeOf1) (collisionType typeOf2)
+		(H.Handler (Just (H.shapes >>= cb)) Nothing Nothing Nothing)
+	where
+	cb (s1,s2) = liftIO $ callback s1 s2
+
 directionToRadians :: Direction -> H.Angle
 directionToRadians d = (factor * pi) / 4
 	where
@@ -359,16 +285,14 @@ deathChance d e
 	where
 	doE p = p `div` (e `div` 25)
 
-maybeEliminate :: Player -> IO (Bool, Player)
+maybeEliminate :: Player -> IO (Maybe Player)
 maybeEliminate player = do
 	x <- getStdRandom (randomR (0,99))
-	-- When x < change, player in eliminated, respawn
-	if x < chance then do
-			newPos <- randomLocation
-			H.position (H.body $ shape player) $= newPos
-			return (True, player {damageAmt = 0, energy = 50, deaths = deaths player + 1, ability  = (Nothing,Nothing)})
-		else
-			return (False, player)
+	-- When x < chance, player in eliminated, respawn
+	if x >= chance then return Nothing else do
+		newPos <- randomLocation
+		H.position (H.body $ shape player) $= newPos
+		return $ Just $ player {damageAmt = 0, energy = 50, deaths = deaths player + 1, ability = (Nothing,Nothing)}
 	where
 	chance = deathChance (damageAmt player) (energy player)
 
@@ -616,69 +540,49 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner' gameSpa
 		mutableProjectiles <- mapM newIORef projectiles
 		mutableItems <- mapM (newIORef . Just) items
 
+		let get' f = fmap f . get
+
 		-- Reset collision handler every time so the right stuff is in scope
-		H.addCollisionHandler hSpace (collisionType $ head players) (collisionType $ head projectiles) (H.Handler
-				(Just (do
-					(plshp, prshp) <- H.shapes
+		setCollisionBegin hSpace players projectiles (\plshp prshp -> do
+			[pl] <- filterM (get' ((==plshp) . shape)) mutablePlayers
+			pr <- filterM (get' ((==prshp) . pshape)) =<< filterM (get' (isNothing . deathPos)) mutableProjectiles
+			case pr of
+				[pr] -> do
+					initialPlayer <- get pl
+					projectile <- get pr
+					unless ((fmap (isBlock . dability) . fst . ability) initialPlayer == Just True) $ do
+						-- Projectile has hit so player is damaged
+						pl $~ (lensDamageAmt ^+= damage projectile)
+						get pl >>= maybeEliminate >>= maybe (return ()) (\player -> do
+							v <- get $ H.velocity $ H.body $ pshape projectile
+							pl $= updateAnimation ticks (setL lensSpeed 0 $ setL lensAbility (
+								case fromIntegral $ knockback projectile of
+									0     -> (Nothing, Nothing)
+									knock -> (Just $ knockedBack ticks (H.scale (H.normalize v) knock), Nothing)
+								) player)
+							)
 
-					liftIO (do
-						let get' f = fmap f . get
-						[pl] <- filterM (get' ((==plshp) . shape)) mutablePlayers
-						pr <- filterM (get' ((==prshp) . pshape)) =<< filterM (get' (isNothing . deathPos)) mutableProjectiles
-						case pr of
-							[pr] -> do
-								initialPlayer <- get pl
-								projectile <- get pr
-								unless ((isBlock `fmap` dability `fmap` fst (ability initialPlayer)) == Just True) $ do
-									-- Projectile has hit so player is damaged
-									pl $~ (\player -> player {damageAmt = damageAmt player + damage projectile})
-									(elim, player) <- maybeEliminate =<< get pl
-									if elim then
-											pl $= player
-										else do
-											v <- get $ H.velocity $ H.body $ pshape projectile
-											case fromIntegral $ knockback projectile of
-												0     ->
-													pl $= updateAnimation ticks (player { speed = 0, ability = (Nothing, Nothing) })
-												knock ->
-													pl $= updateAnimation ticks (player { speed = 0, ability = (Just $ knockedBack ticks (H.scale (H.normalize v) knock), Nothing) })
+					-- Projectile has hit, so it is gone
+					pos <- get $ H.position $ H.body $ pshape projectile
+					vel <- get $ H.velocity $ H.body $ pshape projectile
+					pr $= projectile {deathPos = Just (pos,vel)}
+				_ -> return ()
 
-								-- Projectile has hit, so it is gone
-								pos <- get $ H.position $ H.body $ pshape projectile
-								vel <- get $ H.velocity $ H.body $ pshape projectile
-								pr $= projectile {deathPos = Just (pos,vel)}
-							_ -> return ()
-						)
-
-					return False -- Do not run collision physics
-				))
-				Nothing
-				Nothing
-				Nothing
+			return False -- Do not run collision physics
 			)
 
-		H.addCollisionHandler hSpace (collisionType $ head players) (collisionType $ head items) (H.Handler
-				(Just (do
-					(plshp, itshp) <- H.shapes
+		setCollisionBegin hSpace players items (\plshp itshp -> do
+			[pl] <- filterM (get' ((==plshp) . shape)) mutablePlayers
+			it <- filterM (get' ((==itshp) . itemShape . fromJust)) =<< filterM (get' isJust) mutableItems
 
-					liftIO (do
-						let get' f = fmap f . get
-						[pl] <- filterM (get' ((==plshp) . shape)) mutablePlayers
-						it <- filterM (get' ((==itshp) . itemShape . fromJust)) =<< filterM (get' isJust) mutableItems
+			case it of
+				[it] -> do
+					Just item <- get it
+					pl $~ (\player -> player {energy = energy player + energyBonus item})
+					it $= Nothing
+				_ -> return ()
 
-						case it of
-							[it] -> do
-								Just item <- get it
-								pl $~ (\player -> player {energy = energy player + energyBonus item})
-								it $= Nothing
-							_ -> return ()
-
-						return False
-						)
-				))
-				Nothing
-				Nothing
-				Nothing
+			return False -- Do not run collision physics
 			)
 
 		let time = (ticks - spaceTicks) + dtRemainder

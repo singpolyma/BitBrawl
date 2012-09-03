@@ -38,7 +38,8 @@ executable bitbrawl
                 directory,
                 filepath,
                 random,
-                transformers
+                transformers,
+                data-lens
 
         extra-libraries:
                 SDL_gfx

@@ -2,7 +2,7 @@ module BitBrawl.SDL where
 
 import Control.Concurrent (threadDelay)
 import qualified Graphics.UI.SDL as SDL
-import BitBrawl.Util
+import BitBrawl.Types
 
 -- | Turns out, SDL just does poll-and-wait internally anyway
 --   This wait can time out, which is useful for drawing

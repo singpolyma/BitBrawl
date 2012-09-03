@@ -1,15 +1,8 @@
 module BitBrawl.Animation where
 
 import qualified Graphics.UI.SDL as SDL (Rect, Surface, blitSurface)
-import BitBrawl.Util (jRect, Ticks)
-
-data Animation = Animation {
-		row    :: Int,
-		frames :: Int,
-		frame  :: Int,
-		col    :: Int
-	}
-	deriving (Show, Read, Eq)
+import BitBrawl.Util (jRect)
+import BitBrawl.Types
 
 drawAnimation :: SDL.Surface -> SDL.Surface -> Animation -> (Int,Int) -> IO ()
 drawAnimation win sprites animation (x,y) = do

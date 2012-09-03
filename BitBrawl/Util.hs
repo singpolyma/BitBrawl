@@ -2,19 +2,12 @@ module BitBrawl.Util where
 
 import Control.Monad (filterM)
 import Data.Maybe (fromMaybe)
-import Data.Word (Word32)
 import Graphics.UI.SDL.Keysym (SDLKey)
 import System.Directory (getHomeDirectory, doesDirectoryExist)
 import System.Environment (getEnv)
 import System.FilePath (splitSearchPath, (</>))
-import qualified Physics.Hipmunk as H (Vector(..), CpFloat)
-import qualified Graphics.UI.SDL as SDL (Rect(Rect), Color(Color))
-
-type Ticks = Word32
-type Speed = H.CpFloat
-
-instance Eq SDL.Color where
-	(SDL.Color r1 g1 b1) == (SDL.Color r2 g2 b2) = (r1,g1,b1) == (r2,g2,b2)
+import qualified Physics.Hipmunk as H (Vector(..))
+import qualified Graphics.UI.SDL as SDL (Rect(Rect))
 
 maybeGetEnv :: String -> IO (Maybe String)
 maybeGetEnv k = do
