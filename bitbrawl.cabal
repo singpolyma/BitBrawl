@@ -39,7 +39,8 @@ executable bitbrawl
                 filepath,
                 random,
                 transformers,
-                data-lens
+                data-lens,
+                permute
 
         extra-libraries:
                 SDL_gfx

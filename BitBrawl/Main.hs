@@ -16,6 +16,7 @@ import System.FilePath
 import System.Directory
 import Data.StateVar
 import Data.Attoparsec.Text
+import Text.ParserCombinators.Perm
 import Data.Lens.Common
 
 import qualified Data.Text as T
@@ -688,108 +689,74 @@ newPlayer space sprites music anis controls startTicks mass group = do
 	shapeType = H.Circle 16
 
 player_parser :: Parser (String, String, Animations)
-player_parser = do
-	name <- takeWhile1 (not.isEndOfLine)
-	endOfLine
-	music <- takeWhile1 (not.isEndOfLine)
-	endOfLine
-	anis <- fmap Map.fromList (many animation_set) <* skipSpace <* endOfInput
-	return (T.unpack name, T.unpack music, anis)
+player_parser = (,,)
+		<$> (T.unpack <$> toEndOfLine)
+		<*> (T.unpack <$> toEndOfLine)
+		<*> ws (Map.fromList <$> many (ws animation_set))
+		<* endOfInput
 	where
 	animation_set = do
-		skipSpace
 		key <- takeWhile1 (\x -> not $ x == '{' || isSpace x)
 		aniSet <- braces (do
-			abi <- option Nothing (fmap Just ability)
+			abi <- optional (attack <|> block)
 			case abi of
-				Nothing -> fmap SimpleAnimation directed_animations
+				Nothing -> SimpleAnimation <$> directed_animations
 				Just a -> return a
 			)
 		return (T.unpack key, aniSet)
-	ability = attack <|> block
 	block = do
 		constStr "block"
-		maxDuration <- ws_int
-		energyCost <- ws_int
-		vx <- fromIntegral `fmap` (ws_int :: Parser Int)
-		vy <- fromIntegral `fmap` (ws_int :: Parser Int)
-		sound <- option Nothing (fmap Just abisound)
-		skipSpace
+		b <- Block <$> wsi decimal <*> wsi decimal
+			<*> (H.Vector <$> wsi gDecimal <*> wsi gDecimal)
+			<*> ws (optional abisound)
 		(d, (_, anis)) <- sub_attack "charge" AbilityCharge
-		let b = Block maxDuration energyCost (H.Vector vx vy) sound d
-		return $ AbilityAnimation b (Map.fromList [(AbilityCharge,anis)])
+		return $ AbilityAnimation (b d) (Map.fromList [(AbilityCharge,anis)])
 	attack = do
 		constStr "attack"
-		maxDamage <- ws_int
-		maxKnockback <- ws_int
-		energyCost <- ws_int
-		sound <- option Nothing (fmap Just abisound)
-		skipSpace
-		sub_attacks (Attack maxDamage maxKnockback energyCost sound)
+		sub_attacks =<< Attack <$> wsi decimal <*> wsi decimal <*> wsi decimal
+			<*> ws (optional abisound)
 	abisound = do
-		skipSpace
-		constStr "sound"
-		skipSpace
-		file <- takeWhile1 (not.isEndOfLine)
-		endOfLine
-		return $ T.unpack file
+		ws $ constStr "sound"
+		T.unpack <$> toEndOfLine
 	sub_attacks a = do
-		(d1, a1) <- one_sub_attack
-		(d2, a2) <- one_sub_attack
-		case (a1, a2) of
-			(Left a1, Left a2) -> do
-				let a' = apply_c_r a d1 d2
-				proj <- option Nothing (fmap Just projectile)
-				return $ case proj of
-					Nothing -> AbilityAnimation (a' 0 Nothing) (Map.fromList [a1,a2])
-					Just (d,r,a) -> AbilityAnimation (a' d (Just (a,r))) (Map.fromList [a1,a2])
-			(Left _, Right _) -> sub_attack_partial a (d1, a1) (d2, a2)
-			(Right _, Left _) -> sub_attack_partial a (d2, a2) (d1, a1)
-			_ -> fail "Not allowed to have more than one projectile spec."
-	sub_attack_partial a (d1,Left a1) ((2,dP),Right (rP,aP)) = do
-		(d3, Left a3) <- one_sub_attack
-		let a' = apply_c_r a d1 d3
-		return $ AbilityAnimation (a' dP (Just (aP,rP))) (Map.fromList [a1,a3])
-	sub_attack_partial _ _ _ = fail "Invalid subattack."
-	apply_c_r a d1 d2 = let [(_,c),(_,r)] = sortBy (comparing fst) [d1,d2] in a c r
-	one_sub_attack = do
-		let charge = sub_attack "charge" AbilityCharge
-		let release = sub_attack "release" AbilityRelease
-		v <- (charge <|> release) `eitherP` projectile
-		case v of
-			Left (d, (s,a)) -> return ((fromEnum s,d), Left (s,a))
-			Right (d, r, a) -> return ((2,d), Right (r,a))
+		((charged, chargea), (released, releasea), projectile) <- permute $ (,,)
+			<$$> sub_attack "charge" AbilityCharge
+			<||> sub_attack "release" AbilityRelease
+			<|?> (Nothing, Just <$> projectile)
+		return $ AbilityAnimation
+			(a charged released (maybe 0 fst projectile) (fmap snd projectile))
+			(Map.fromList [chargea, releasea])
 	projectile = do
 		constStr "projectile"
-		duration <- ws_int
-		rate <- ws_int
+		duration <- wsi decimal
+		rate <- wsi decimal
 		anis <- braces directed_animations
-		return (duration, rate, anis)
+		return (duration, (anis, rate))
 	sub_attack s state = do
 		constStr s
-		duration <- ws_int
+		duration <- wsi decimal
 		anis <- braces directed_animations
 		return (duration, (state, anis))
 	directed_animations = fmap Map.fromList $ many (skipSpace >> directed_animation)
 	directed_animation = do
 		direction <- readOne ["NE", "NW", "SE", "SW", "E", "N", "W", "S"]
-		ani <- liftM2 Animation ws_int ws_int
-		col <- ws_int
-		skipWhile (\x -> isSpace x && not (isEndOfLine x)) *> endOfLine
+		ani <- liftM2 Animation (wsi decimal) (wsi decimal)
+		col <- wsi decimal
+		endOfLine
 		return (direction, ani col col)
 	braces f = do
-		skipSpace
-		_ <- char '{'
-		skipSpace
+		_ <- ws $ char '{'
 		v <- f
-		skipSpace
-		_ <- char '}'
-		skipSpace
+		_ <- ws $ char '}'
 		return v
 	constStr s = void $ string $ T.pack s
 	readOne = fmap (read . T.unpack) . choice . map (string . T.pack)
-	ws_int :: (Integral a) => Parser a
-	ws_int = skipSpace *> decimal
+	optional p = option Nothing (Just <$> p)
+	toEndOfLine = takeWhile1 (not.isEndOfLine) <* endOfLine
+	gDecimal = fromIntegral <$> (decimal :: Parser Int)
+	wsi p = skipISpace *> p <* skipISpace
+	ws p = skipSpace *> p <* skipSpace
+	skipISpace = skipWhile (uncurry (&&) . (isSpace &&& not . isEndOfLine))
 
 startGame :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> SDL.Surface -> [((t, Animations, SDL.Surface, SDL.Mixer.Music), Control)] -> IO ()
 startGame menuMusic win fonts sounds mapImage tree controls = do

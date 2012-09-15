@@ -15,7 +15,7 @@ I am using cabal for all Haskell dependencies because some dependencies need to 
 === Install Haskell Dependencies ===
 
 	cabal update
-	cabal install containers SDL SDL-image SDL-ttf SDL-mixer text attoparsec colour StateVar directory filepath random transformers data-lens derive
+	cabal install containers SDL SDL-image SDL-ttf SDL-mixer text attoparsec colour StateVar directory filepath random transformers permute data-lens derive
 	cabal install Hipmunk
 
 	NOTE: You will need ~/.cabal/bin in PATH for the derive command to be found.
