@@ -6,6 +6,7 @@ import Data.Map (Map)
 import Graphics.UI.SDL.Keysym (SDLKey(..))
 import qualified Graphics.UI.SDL as SDL
 import qualified Graphics.UI.SDL.Mixer as SDL.Mixer
+import qualified Graphics.UI.SDL.TTF as SDL.TTF
 import qualified Physics.Hipmunk as H
 
 instance Eq SDL.Color where
@@ -107,3 +108,8 @@ data KeyState = KeyDown | KeyUp deriving (Show, Read, Enum, Ord, Eq)
 data Control = KeyboardControl [(SDLKey, KeyboardAction)] deriving (Show, Eq)
 
 data Space = Space H.Space Ticks Ticks
+
+data Fonts = Fonts {
+	menuFont  :: SDL.TTF.Font,
+	statsFont :: SDL.TTF.Font
+}

@@ -297,12 +297,12 @@ maybeEliminate player = do
 	where
 	chance = deathChance (damageAmt player) (energy player)
 
-winScreen :: SDL.Surface -> Map String SDL.TTF.Font -> [Player] -> IO ()
-winScreen win fonts players = do
+winScreen :: SDL.Surface -> Fonts -> [Player] -> IO ()
+winScreen win (Fonts menuFont statsFont) players = do
 	black <- color2pixel win $ SDL.Color 0 0 0
 	True <- SDL.fillRect win (jRect 0 0 windowWidth windowHeight) black
-	(w, h) <- SDL.TTF.utf8Size (fonts ! "menu") "Press any key to exit"
-	anykey <- SDL.TTF.renderUTF8Blended (fonts ! "menu") "Press any key to exit" (SDL.Color 0xff 0xff 0xff)
+	(w, h) <- SDL.TTF.utf8Size menuFont "Press any key to exit"
+	anykey <- SDL.TTF.renderUTF8Blended menuFont "Press any key to exit" (SDL.Color 0xff 0xff 0xff)
 	True <- SDL.blitSurface anykey Nothing win (jRect ((windowWidth `div` 2) - (w `div` 2)) 10 0 0)
 	mapM_ (\(i,player) -> do
 			let (x,y) = ((windowWidth `div` 2) - (windowWidth `div` 4), (10+h+5)+(i*(64+10)))
@@ -311,8 +311,8 @@ winScreen win fonts players = do
 			True <- SDL.blitSurface (sprites player) (clipAnimation $ simpleAni (animations player) "idle" E) win (jRect (x+2) (y+2) 0 0)
 
 
-			(_, h) <- SDL.TTF.utf8Size (fonts ! "stats") "00"
-			deaths <- SDL.TTF.renderUTF8Blended (fonts ! "stats") (show $ deaths player) (SDL.Color 0xaa 0 0)
+			(_, h) <- SDL.TTF.utf8Size statsFont "00"
+			deaths <- SDL.TTF.renderUTF8Blended statsFont (show $ deaths player) (SDL.Color 0xaa 0 0)
 			SDL.blitSurface deaths Nothing win (jRect (x+64+5) (y + ((64+4) `div` 2) - (h `div` 2)) 0 0)
 		) (zip [0..] sortedPlayers)
 	SDL.flip win
@@ -327,8 +327,8 @@ winScreen win fonts players = do
 			SDL.Quit -> return ()
 			_ -> pause
 
-gameLoop :: SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> SDL.Surface -> Ticks -> [Item] -> H.Body -> Space -> [Player] -> [Projectile] -> [Item] -> IO ()
-gameLoop win fonts sounds mapImage tree startTicks possibleItems winner' gameSpace' players' projectiles' items' =
+gameLoop :: SDL.Surface -> Fonts -> Map String SDL.Mixer.Chunk -> SDL.Surface -> SDL.Surface -> Ticks -> [Item] -> H.Body -> Space -> [Player] -> [Projectile] -> [Item] -> IO ()
+gameLoop win fonts@(Fonts {statsFont=statsFont}) sounds mapImage tree startTicks possibleItems winner' gameSpace' players' projectiles' items' =
 	loop (Nothing, (0,startTicks)) startTicks players' projectiles' items' winner' gameSpace'
 	where
 	loop (Nothing, (_,lastTime)) ticks players projectiles items winner gameSpace
@@ -604,16 +604,16 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner' gameSpa
 		group <- fmap fromIntegral $ get $ H.group $ shape player
 		let xadj = if deaths player < 10 then w `div` 2 else 0
 		let (sx, sy) = (offset+((group-1)*(w+6)), h+5)
-		deaths <- SDL.TTF.renderUTF8Blended (fonts ! "stats") (show $ deaths player) (SDL.Color 0xaa 0 0)
+		deaths <- SDL.TTF.renderUTF8Blended statsFont (show $ deaths player) (SDL.Color 0xaa 0 0)
 		c <- color2pixel win $ color player
 		True <- SDL.fillRect win (jRect (sx-2) (sy-2) (w+4) (h+4)) c
 		True <- SDL.blitSurface deaths Nothing win (jRect (sx+xadj) sy 0 0)
 		return ()
 
 	drawDeaths players = do
-		(w, h) <- SDL.TTF.utf8Size (fonts ! "stats") "00"
-		(offset, _) <- SDL.TTF.utf8Size (fonts ! "stats") "Deaths  "
-		label <- SDL.TTF.renderUTF8Blended (fonts ! "stats") "Deaths  " (SDL.Color 0xff 0 0)
+		(w, h) <- SDL.TTF.utf8Size statsFont "00"
+		(offset, _) <- SDL.TTF.utf8Size statsFont "Deaths  "
+		label <- SDL.TTF.renderUTF8Blended statsFont "Deaths  " (SDL.Color 0xff 0 0)
 		True <- SDL.blitSurface label Nothing win (jRect 10 h 0 0)
 		mapM_ (drawPlayerStat (offset+10) w h) players
 
@@ -621,8 +621,8 @@ gameLoop win fonts sounds mapImage tree startTicks possibleItems winner' gameSpa
 		let minutes = (timeLimit - (ticks - startTicks)) `div` (1000*60)
 		let seconds = ((timeLimit - (ticks - startTicks)) `div` 1000) - (minutes*60)
 		let clockS = zeroPad 2 (show minutes) ++ ":" ++ zeroPad 2 (show seconds)
-		(w, _) <- SDL.TTF.utf8Size (fonts ! "stats") clockS
-		clock <- SDL.TTF.renderUTF8Blended (fonts ! "stats") clockS (SDL.Color 0xff 0xff 0xff)
+		(w, _) <- SDL.TTF.utf8Size statsFont clockS
+		clock <- SDL.TTF.renderUTF8Blended statsFont clockS (SDL.Color 0xff 0xff 0xff)
 		let centre = (windowWidth `div` 2) - (w `div` 2)
 		True <- SDL.blitSurface clock Nothing win (jRect centre 5 0 0)
 		return ()
@@ -758,7 +758,7 @@ player_parser = (,,)
 	ws p = skipSpace *> p <* skipSpace
 	skipISpace = skipWhile (uncurry (&&) . (isSpace &&& not . isEndOfLine))
 
-startGame :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> SDL.Surface -> [((t, Animations, SDL.Surface, SDL.Mixer.Music), Control)] -> IO ()
+startGame :: SDL.Mixer.Music -> SDL.Surface -> Fonts -> Map String SDL.Mixer.Chunk -> SDL.Surface -> SDL.Surface -> [((t, Animations, SDL.Surface, SDL.Mixer.Music), Control)] -> IO ()
 startGame menuMusic win fonts sounds mapImage tree controls = do
 	gameSpace <- H.newSpace
 	startTicks <- SDL.getTicks
@@ -831,14 +831,13 @@ startGame menuMusic win fonts sounds mapImage tree controls = do
 	pinShape body shape = H.newShape body shape (H.Vector 0 0)
 	line (x1, y1) (x2, y2) = H.LineSegment (H.Vector x1 y1) (H.Vector x2 y2) 0
 
-playerJoinLoop :: SDL.Mixer.Music -> SDL.Surface -> Map String SDL.TTF.Font -> Map String SDL.Mixer.Chunk -> SDL.Surface -> SDL.Surface -> [(String, Animations, SDL.Surface, SDL.Mixer.Music)] -> IO ()
-playerJoinLoop menuMusic win fonts sounds mapImage tree pcs = do
+playerJoinLoop :: SDL.Mixer.Music -> SDL.Surface -> Fonts -> Map String SDL.Mixer.Chunk -> SDL.Surface -> SDL.Surface -> [(String, Animations, SDL.Surface, SDL.Mixer.Music)] -> IO ()
+playerJoinLoop menuMusic win fonts@(Fonts {menuFont=menuFont}) sounds mapImage tree pcs = do
 	switchMusic menuMusic
 	now <- SDL.getTicks
 	loop (Nothing, (frameTime,now)) Nothing 0 kActions [emptyPC]
 	where
 	emptyPC = (0, KeyboardControl [])
-	menuFont = fonts ! "menu"
 	kActions = [KStart, KSelect, KFace E, KFace N, KFace W, KFace S, KAbility1, KAbility2, KAbility3, KAbility4]
 	kActionString (KFace E) = "East (Right)"
 	kActionString (KFace N) = "North (Up)"
@@ -989,8 +988,6 @@ main = withExternalLibs $ do
 	numberFontPath <- findDataFile' "CevicheOne-Regular.ttf"
 	statsFont <- SDL.TTF.openFont numberFontPath 30
 
-	let fonts = Map.fromList [("menu", menuFont), ("stats", statsFont)]
-
 	mapPath <- findDataFile' "map.png"
 	mapImage <- SDL.displayFormat =<< SDL.load mapPath
 
@@ -1022,6 +1019,7 @@ main = withExternalLibs $ do
 	menuMusicPath <- findDataFile' "menu.ogg"
 	menuMusic <- SDL.Mixer.loadMUS menuMusicPath
 
+	let fonts = Fonts {menuFont = menuFont, statsFont = statsFont}
 	playerJoinLoop menuMusic win fonts soundsMap mapImage tree pcs
 
 	-- Need to do this so that SDL.TTF.quit will not segfault
