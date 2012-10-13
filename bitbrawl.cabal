@@ -22,6 +22,14 @@ extra-source-files:
 executable bitbrawl
         main-is: BitBrawl/Main.hs
         ghc-options: -threaded
+        other-modules:
+                BitBrawl.Animation,
+                BitBrawl.Colour,
+                BitBrawl.SDLgfx,
+                BitBrawl.SDL,
+                BitBrawl.Types,
+                BitBrawl.Util,
+                BitBrawl.Derive
 
         build-depends:
                 base == 4.*,

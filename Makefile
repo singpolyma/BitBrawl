@@ -9,12 +9,12 @@ all: report.html doc dist/build/bitbrawl/bitbrawl dist/bitbrawl-$(VERSION).tar.g
 install: dist/build/bitbrawl/bitbrawl
 	cabal install
 
-report.html: BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs BitBrawl/SDL.hs BitBrawl/Types.hs
+report.html: BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs BitBrawl/SDL.hs BitBrawl/Types.hs BitBrawl/Derive.hs
 	-hlint $(HLINTFLAGS) --report BitBrawl
 
 doc: dist/doc/html/bitbrawl/index.html README
 
-dist/doc/html/bitbrawl/index.html: dist/setup-config BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs BitBrawl/SDL.hs BitBrawl/Types.hs 
+dist/doc/html/bitbrawl/index.html: dist/setup-config BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs BitBrawl/SDL.hs BitBrawl/Types.hs BitBrawl/Derive.hs
 	-cabal haddock --hyperlink-source --executables
 
 dist/setup-config: bitbrawl.cabal
@@ -22,13 +22,21 @@ dist/setup-config: bitbrawl.cabal
 
 clean:
 	find -name '*.o' -o -name '*.hi' | xargs $(RM)
-	$(RM) -r dist dist-ghc
+	$(RM) -r dist dist-ghc BitBrawl/Derive.hs
 
-dist/build/bitbrawl/bitbrawl: bitbrawl.cabal dist/setup-config BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs BitBrawl/SDL.hs BitBrawl/Types.hs 
-	# This is a bit problematic because we are editing the end of a file that is in git
-	derive -a -d Lens BitBrawl/Types.hs
+BitBrawl/Derive.hs: BitBrawl/Types.hs
+	derive -m BitBrawl.Derive \
+		-iBitBrawl.Types \
+		-iData.Lens.Common \
+		-i'qualified Graphics.UI.SDL as SDL' \
+		-i'qualified Graphics.UI.SDL.TTF as SDL.TTF' \
+		-i'qualified Graphics.UI.SDL.Mixer as SDL.Mixer' \
+		-i'qualified Physics.Hipmunk as H' \
+		-d Lens BitBrawl/Types.hs > $@
+
+dist/build/bitbrawl/bitbrawl: bitbrawl.cabal dist/setup-config BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs BitBrawl/SDL.hs BitBrawl/Types.hs BitBrawl/Derive.hs
 	cabal build --ghc-options="$(GHCFLAGS)"
 
-dist/bitbrawl-$(VERSION).tar.gz: bitbrawl.cabal dist/setup-config README BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs BitBrawl/SDL.hs BitBrawl/Types.hs 
+dist/bitbrawl-$(VERSION).tar.gz: bitbrawl.cabal dist/setup-config README BitBrawl/Main.hs BitBrawl/Util.hs BitBrawl/SDLgfx.hs BitBrawl/Animation.hs BitBrawl/Colour.hs BitBrawl/SDL.hs BitBrawl/Types.hs BitBrawl/Derive.hs
 	cabal check
 	cabal sdist

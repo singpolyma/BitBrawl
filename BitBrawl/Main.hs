@@ -38,6 +38,7 @@ import BitBrawl.SDLgfx
 import BitBrawl.SDL
 import BitBrawl.Util
 import BitBrawl.Types
+import BitBrawl.Derive
 
 class CollisionLayers a where
 	collisionLayers :: a -> H.Layers

@@ -4,3 +4,4 @@
 dist/
 dist-ghc/
 report.html
+BitBrawl/Derive.hs

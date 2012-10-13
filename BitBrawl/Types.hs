@@ -1,7 +1,6 @@
 module BitBrawl.Types where
 
 import Data.Word (Word32)
-import Data.Lens.Common (lens, Lens)
 import Data.Map (Map)
 import Graphics.UI.SDL.Keysym (SDLKey(..))
 import qualified Graphics.UI.SDL as SDL
