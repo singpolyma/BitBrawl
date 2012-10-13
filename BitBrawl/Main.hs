@@ -316,7 +316,7 @@ winScreen win (Fonts menuFont statsFont) players = do
 			SDL.blitSurface deaths Nothing win (jRect (x+64+5) (y + ((64+4) `div` 2) - (h `div` 2)) 0 0)
 		) (zip [0..] sortedPlayers)
 	SDL.flip win
-	threadDelay 3000000
+	threadDelay 3000000 -- Ignore any events for some time, to prevent accidents
 	pause
 	where
 	sortedPlayers = sortBy (comparing deaths) players
