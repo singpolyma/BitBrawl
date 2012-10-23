@@ -1,11 +1,18 @@
 module BitBrawl.Util where
 
-import Control.Monad (filterM)
+import Control.Monad (filterM, liftM)
+import Control.Arrow ((&&&), second)
 import Data.Maybe (fromMaybe)
 import Graphics.UI.SDL.Keysym (SDLKey)
 import System.Directory (getHomeDirectory, doesDirectoryExist)
 import System.Environment (getEnv)
 import System.FilePath (splitSearchPath, (</>))
+
+import Data.Lens.Common (Lens(..), lens, getL, setL)
+import Control.Comonad.Trans.Store (StoreT(..))
+import Data.Functor.Identity (Identity(..))
+import Control.Monad.Trans.State.Lazy (StateT(..))
+
 import qualified Physics.Hipmunk as H (Vector(..))
 import qualified Graphics.UI.SDL as SDL (Rect(Rect))
 
@@ -45,3 +52,22 @@ timesLoop n f = f >> (n-1) `timesLoop` f
 headMsg :: String -> [a] -> a
 headMsg _ (x:_) = x
 headMsg msg _ = error msg
+
+-- Lens utils
+
+infixr 4 ^++
+(^++) :: Lens a b1 -> Lens a b2 -> Lens a (b1, b2)
+(^++) l1 l2 =
+	lens
+	(getL l1 &&& getL l2)
+	(\(b1,b2) a -> setL l2 b2 (setL l1 b1 a))
+
+infixr 4 <%=>
+(<%=>) :: Monad m => Lens a b -> (b -> m b) -> StateT a m b
+Lens f <%=> g = StateT $ \a -> case f a of
+	StoreT (Identity h) b -> liftM (\b' -> (b', h b')) (g b)
+
+infixr 4 <%%=>
+(<%%=>) :: Monad m => Lens a b -> (b -> m (c, b)) -> StateT a m c
+Lens f <%%=> g = StateT $ \a -> case f a of
+	StoreT (Identity h) b -> liftM (second h) (g b)

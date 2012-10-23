@@ -47,6 +47,7 @@ executable bitbrawl
                 filepath,
                 random,
                 transformers,
+                comonad-transformers,
                 data-lens,
                 permute
 

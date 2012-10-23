@@ -17,7 +17,8 @@ import System.Directory
 import Data.StateVar
 import Data.Attoparsec.Text
 import Text.ParserCombinators.Perm
-import Data.Lens.Common
+import Data.Lens.Lazy
+import Control.Monad.Trans.State.Lazy (runStateT)
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -332,41 +333,32 @@ gameLoop :: SDL.Surface -> Fonts -> Map String SDL.Mixer.Chunk -> SDL.Surface ->
 gameLoop win fonts@(Fonts {statsFont=statsFont}) sounds mapImage tree startTicks possibleItems winner' gameSpace' players' projectiles' items' =
 	loop (Nothing, (0,startTicks)) startTicks players' projectiles' items' winner' gameSpace'
 	where
+	runLoopUpdate frameTime lastTime lus f = do
+		(winner', LoopUpdateState gameSpace' players' projectiles' items') <- runStateT f lus
+		next (frameTime, lastTime) players' projectiles' items' winner' gameSpace'
+
 	loop (Nothing, (_,lastTime)) ticks players projectiles items winner gameSpace
 		| timeLimit - toInteger (ticks - startTicks) < 1000 =
 			winScreen win fonts players
-		| otherwise = do
-			projectiles' <- doProjectiles projectiles ticks
-			(players', newProjectiles) <- doAbilities players ticks gameSpace
-			let projectiles'' = projectiles' ++ newProjectiles
-			(gameSpace', players'', projectiles''', items') <- doPhysics ticks projectiles'' players' items gameSpace
-			(players''', projectiles'''', items'') <- doDrawing ticks players'' projectiles''' items' gameSpace'
+		| otherwise = runLoopUpdate frameTime lastTime (LoopUpdateState gameSpace players projectiles items) $ do
+			void $ lensLoopProjectiles <%=> doProjectiles ticks
+			gameSpace <- access lensLoopGameSpace
+			newProjectiles <- lensLoopPlayers <%%=> doAbilities ticks gameSpace
+			void $ lensLoopProjectiles %= (++ newProjectiles)
 
-			newEnergy <- getStdRandom (randomR (0,energyDropTime `div` frameTime)) :: IO Int
-			items''' <- if newEnergy == 1 then do
-					let Just (Energy {
-							itemAnimation = (sprites,ani,_),
-							energyBonus = bonus
-						}) = find isEnergy possibleItems
-					body <- H.newBody H.infinity H.infinity
-					shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
+			void $ (lensLoopGameSpace ^++ lensLoopPlayers ^++ lensLoopProjectiles ^++ lensLoopItems) <%=> doPhysics ticks
 
-					let energy = Energy (sprites,ani,ticks) bonus shp
+			gameSpace <- access lensLoopGameSpace
+			void $ (lensLoopPlayers ^++ lensLoopProjectiles ^++ lensLoopItems) <%=> doDrawing ticks gameSpace
 
-					newPos <- randomLocation
-					H.position body $= newPos
-
-					H.collisionType shp $= collisionType energy
-					let (Space hSpace _ _) = gameSpace in H.spaceAdd hSpace shp
-
-					return (energy:items'')
-				else
-					return items''
+			newEnergy <- liftIO $ getStdRandom (randomR (0::Int,energyDropTime `div` frameTime))
+			when (newEnergy == 1) (void $ lensLoopItems <%=>
+					(\items -> fmap (:items) (newEnergyPellet ticks gameSpace))
+				)
 
 			let winner' = minimumBy (comparing deaths) players
-			unless (winner == control winner') (switchMusic (music winner'))
-
-			next (frameTime,lastTime) players''' projectiles'''' items''' (control winner') gameSpace'
+			unless (winner == control winner') (liftIO $ switchMusic (music winner'))
+			return (control winner')
 
 	loop (Just (SDL.KeyDown (SDL.Keysym {SDL.symKey = keysym})), ticksLeft) ticks players projectiles items winner gameSpace =
 		next ticksLeft (handleKeyboard ticks players KeyDown keysym) projectiles items winner gameSpace
@@ -460,8 +452,7 @@ gameLoop win fonts@(Fonts {statsFont=statsFont}) sounds mapImage tree startTicks
 		H.velocity (control player) $= case ability player of
 			(Just (DoingAbility {dability = Block {velocity = v}}), _) -> v
 			_ -> H.Vector (speed player) 0 `H.rotate` d
-	doProjectiles projectiles ticks =
-		mapM (\p -> do
+	doProjectiles ticks = mapM (\p -> do
 			let dead = ticks > life p
 			if dead && isNothing (deathPos p) then do
 					pos <- get $ H.position $ H.body $ pshape p
@@ -469,7 +460,7 @@ gameLoop win fonts@(Fonts {statsFont=statsFont}) sounds mapImage tree startTicks
 					return $ p {deathPos = Just (pos,vel)}
 				else
 					return p
-		) projectiles
+		)
 	setupNextAbility ticks nextAbility = (\a ->
 			a {
 				started = ticks,
@@ -492,12 +483,12 @@ gameLoop win fonts@(Fonts {statsFont=statsFont}) sounds mapImage tree startTicks
 			return $ updateAnimation ticks $ p {energy = maximum [0, energy p - cost], ability = (nextAbility', Nothing) }
 	doAbility ticks _ p@(Player {ability = (Just a@(DoingAbility _ (Block {maxDuration = d}) s Nothing), nxt)})
 		| (toInteger ticks - toInteger s) >= toInteger d =
-			return (p {ability = (Just (a {ended = Just ticks}),nxt)}, Nothing)
+			return (Nothing, p {ability = (Just (a {ended = Just ticks}),nxt)})
 	doAbility ticks _ p@(Player {ability = (Just (DoingAbility _ a@(Block {}) s (Just e)), nextAbility)}) = do
 			let cost = costFromRatio a $ ratioFromLen a s e
 			p' <- commonAbility ticks p a cost nextAbility
 
-			return (p', Nothing)
+			return (Nothing, p')
 	doAbility ticks (Space hSpace _ _) p@(Player {ability = (Just (DoingAbility _ a@(Attack {}) s (Just e)), nextAbility)})
 		| (toInteger ticks - toInteger e) >= toInteger (releaseLen a) = do
 			let ratio = ratioFromLen a s e
@@ -529,13 +520,14 @@ gameLoop win fonts@(Fonts {statsFont=statsFont}) sounds mapImage tree startTicks
 					H.spaceAdd hSpace body
 					H.spaceAdd hSpace shp
 
-					return (p', Just newProjectile)
+					return (Just newProjectile, p')
 				_ ->
-					return (p', Nothing)
-	doAbility _ _ p = return (p, Nothing)
-	doAbilities players ticks gameSpace =
-		second catMaybes `fmap` unzip `fmap` mapM (doAbility ticks gameSpace) players
-	doPhysics ticks projectiles players items (Space hSpace spaceTicks dtRemainder) = do
+					return (Nothing, p')
+	doAbility _ _ p = return (Nothing, p)
+	doAbilities ticks gameSpace players =
+		first catMaybes `fmap` unzip `fmap` mapM (doAbility ticks gameSpace) players
+
+	doPhysics ticks (Space hSpace spaceTicks dtRemainder, (players, (projectiles, items))) = do
 		mapM_ setPlayerVelocity players
 
 		mutablePlayers <- mapM newIORef players
@@ -594,7 +586,25 @@ gameLoop win fonts@(Fonts {statsFont=statsFont}) sounds mapImage tree startTicks
 		projectiles' <- mapM get mutableProjectiles
 		items' <- catMaybes `fmap` mapM get mutableItems
 
-		return (Space hSpace ticks (time `mod` frameTime), players', projectiles', items')
+		return (Space hSpace ticks (time `mod` frameTime), (players', (projectiles', items')))
+
+	newEnergyPellet ticks gameSpace = liftIO $ do
+		let Just (Energy {
+				itemAnimation = (sprites,ani,_),
+				energyBonus = bonus
+			}) = find isEnergy possibleItems
+		body <- H.newBody H.infinity H.infinity
+		shp <- H.newShape body (H.Circle 16) (H.Vector 0 0)
+
+		let energy = Energy (sprites,ani,ticks) bonus shp
+
+		newPos <- randomLocation
+		H.position body $= newPos
+
+		H.collisionType shp $= collisionType energy
+		let (Space hSpace _ _) = gameSpace in H.spaceAdd hSpace shp
+
+		return energy
 
 	advanceAndDrawByZ ds ticks = do
 		let ds' = map (`advance` ticks) ds
@@ -628,7 +638,7 @@ gameLoop win fonts@(Fonts {statsFont=statsFont}) sounds mapImage tree startTicks
 		True <- SDL.blitSurface clock Nothing win (jRect centre 5 0 0)
 		return ()
 
-	doDrawing ticks players projectiles items (Space s _ _ ) = do
+	doDrawing ticks (Space s _ _ ) (players, (projectiles, items)) = do
 		-- We don't know where the players were before. Erase whole screen
 		True <- SDL.blitSurface mapImage Nothing win (jRect 0 0 0 0)
 
@@ -648,7 +658,7 @@ gameLoop win fonts@(Fonts {statsFont=statsFont}) sounds mapImage tree startTicks
 		mapM_ (H.spaceRemove s . pshape) deadProjectiles
 
 		SDL.flip win
-		return (players', projectiles'', items')
+		return (players', (projectiles'', items'))
 
 newPlayer :: H.Space -> SDL.Surface -> SDL.Mixer.Music -> Animations -> Control -> Ticks -> H.CpFloat -> H.Group -> IO Player
 newPlayer space sprites music anis controls startTicks mass group = do

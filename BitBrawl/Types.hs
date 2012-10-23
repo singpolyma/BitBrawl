@@ -19,6 +19,13 @@ type Animations = Map String AnimationSet
 
 data Direction = E | NE | N | NW | W | SW | S | SE deriving (Show, Read, Enum, Ord, Eq)
 
+data LoopUpdateState = LoopUpdateState {
+		loopGameSpace :: Space,
+		loopPlayers :: [Player],
+		loopProjectiles :: [Projectile],
+		loopItems :: [Item]
+	}
+
 data Item = Energy {
 		itemAnimation :: (SDL.Surface, Animation, Ticks),
 		energyBonus   :: Int,
